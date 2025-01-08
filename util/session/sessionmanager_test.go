@@ -304,13 +304,8 @@ type tokenVerifierMock struct {
 	err    error
 }
 
-<<<<<<< HEAD
 func (tm *tokenVerifierMock) VerifyToken(_ string) (jwt.Claims, string, error) {
-	if tm.claims == nil {
-=======
-func (tm *tokenVerifierMock) VerifyToken(token string) (jwt.Claims, string, error) {
 	if tm.err != nil {
->>>>>>> 7bd5b1485 (updated getUser tests and fixed some failing tests)
 		return nil, "", tm.err
 	}
 	mapClaims := jwt.MapClaims{
