@@ -53,6 +53,7 @@ import (
 	iomocks "github.com/argoproj/argo-cd/v3/util/io/mocks"
 	ocimocks "github.com/argoproj/argo-cd/v3/util/oci/mocks"
 	"github.com/argoproj/argo-cd/v3/util/settings"
+	"github.com/argoproj/argo-cd/v3/util/sourceintegrity"
 )
 
 var sourceIntegrityReqStrict = &v1alpha1.SourceIntegrity{
@@ -104,6 +105,32 @@ var sourceIntegrityResultGitError = &v1alpha1.SourceIntegrityCheckResult{Checks:
 		"Failed verifying revision 111589b8001a0bd78bb311cb03c9d129c6f91de1 by 'Unsigned <unsigned@acme.com>': unsigned (key_id=)",
 	},
 }}}
+
+// sourceIntegrityHelmProvenance: Helm policy matching all repos, requires provenance.
+var sourceIntegrityHelmProvenance = &v1alpha1.SourceIntegrity{
+	Helm: &v1alpha1.SourceIntegrityHelm{
+		Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
+			Repos: []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "*"}},
+			GPG: &v1alpha1.SourceIntegrityHelmPolicyGPG{
+				Mode: v1alpha1.SourceIntegrityHelmPolicyGPGModeProvenance,
+				Keys: []string{"27252B168248743B"},
+			},
+		}},
+	},
+}
+
+// sourceIntegrityHelmNoMatch: Helm policy for different repo; does not match "https://helm.example.com".
+var sourceIntegrityHelmNoMatch = &v1alpha1.SourceIntegrity{
+	Helm: &v1alpha1.SourceIntegrityHelm{
+		Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
+			Repos: []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://other.com/*"}},
+			GPG: &v1alpha1.SourceIntegrityHelmPolicyGPG{
+				Mode: v1alpha1.SourceIntegrityHelmPolicyGPGModeProvenance,
+				Keys: []string{"abc"},
+			},
+		}},
+	},
+}
 
 type clientFunc func(*gitmocks.Client, *helmmocks.Client, *ocimocks.Client, *iomocks.TempPaths)
 
@@ -398,7 +425,7 @@ func TestGenerateManifests_K8SAPIResetCache(t *testing.T) {
 
 	cachedFakeResponse := &apiclient.ManifestResponse{Manifests: []string{"Fake"}, Revision: mock.Anything}
 
-	err := service.cache.SetManifests(mock.Anything, &src, q.RefSources, &q, "", "", "", "", &cache.CachedManifestResponse{ManifestResponse: cachedFakeResponse}, nil, "")
+	err := service.cache.SetManifests(mock.Anything, &src, q.RefSources, &q, "", "", "", "", &cache.CachedManifestResponse{ManifestResponse: cachedFakeResponse}, nil, "", nil)
 	require.NoError(t, err)
 
 	res, err := service.GenerateManifest(t.Context(), &q)
@@ -423,7 +450,7 @@ func TestGenerateManifests_EmptyCache(t *testing.T) {
 		ProjectSourceRepos: []string{"*"},
 	}
 
-	err := service.cache.SetManifests(mock.Anything, &src, q.RefSources, &q, "", "", "", "", &cache.CachedManifestResponse{ManifestResponse: nil}, nil, "")
+	err := service.cache.SetManifests(mock.Anything, &src, q.RefSources, &q, "", "", "", "", &cache.CachedManifestResponse{ManifestResponse: nil}, nil, "", nil)
 	require.NoError(t, err)
 
 	res, err := service.GenerateManifest(t.Context(), &q)
@@ -865,7 +892,7 @@ func TestManifestGenErrorCacheByNumRequests(t *testing.T) {
 		assert.NotNil(t, manifestRequest)
 
 		cachedManifestResponse := &cache.CachedManifestResponse{}
-		err := service.cache.GetManifests(mock.Anything, manifestRequest.ApplicationSource, manifestRequest.RefSources, manifestRequest, manifestRequest.Namespace, "", manifestRequest.AppLabelKey, manifestRequest.AppName, cachedManifestResponse, nil, "")
+		err := service.cache.GetManifests(mock.Anything, manifestRequest.ApplicationSource, manifestRequest.RefSources, manifestRequest, manifestRequest.Namespace, "", manifestRequest.AppLabelKey, manifestRequest.AppName, cachedManifestResponse, nil, "", manifestRequest.SourceIntegrity)
 		require.NoError(t, err)
 		return cachedManifestResponse
 	}
@@ -1971,6 +1998,101 @@ func TestGetSignatureVerificationResult(t *testing.T) {
 	}
 }
 
+func TestHelmSourceIntegrity_NoSourceIntegrity_ReturnsNil(t *testing.T) {
+	service := newService(t, ".")
+	source := &v1alpha1.ApplicationSource{Chart: "my-chart", TargetRevision: ">= 1.0.0", RepoURL: "https://helm.example.com"}
+	request := &apiclient.ManifestRequest{
+		Repo: &v1alpha1.Repository{Repo: "https://helm.example.com"},
+		ApplicationSource: source, NoCache: true, ProjectName: "something",
+		ProjectSourceRepos: []string{"*"},
+		SourceIntegrity:    nil,
+	}
+	res, err := service.GenerateManifest(t.Context(), request)
+	require.NoError(t, err)
+	assert.NotNil(t, res)
+	assert.Nil(t, res.SourceIntegrityResult)
+}
+
+func TestHelmSourceIntegrity_SkippedWhenNoPolicyMatches(t *testing.T) {
+	service := newService(t, ".")
+	source := &v1alpha1.ApplicationSource{Chart: "my-chart", TargetRevision: ">= 1.0.0", RepoURL: "https://helm.example.com"}
+	request := &apiclient.ManifestRequest{
+		Repo: &v1alpha1.Repository{Repo: "https://helm.example.com"},
+		ApplicationSource: source, NoCache: true, ProjectName: "something",
+		ProjectSourceRepos: []string{"*"},
+		SourceIntegrity:    sourceIntegrityHelmNoMatch,
+	}
+	res, err := service.GenerateManifest(t.Context(), request)
+	require.NoError(t, err)
+	require.NotNil(t, res.SourceIntegrityResult)
+	assert.True(t, res.SourceIntegrityResult.IsValid())
+	require.NoError(t, res.SourceIntegrityResult.AsError())
+	assert.Equal(t, sourceintegrity.CheckNameHelmProvenance, res.SourceIntegrityResult.Checks[0].Name)
+	assert.Empty(t, res.SourceIntegrityResult.Checks[0].Problems)
+}
+
+func TestHelmSourceIntegrity_OciNotSupported(t *testing.T) {
+	root := t.TempDir()
+	service, _, _ := newServiceWithOpt(t, func(gitClient *gitmocks.Client, helmClient *helmmocks.Client, ociClient *ocimocks.Client, paths *iomocks.TempPaths) {
+		// OCI repo: GetTags used for version resolution
+		helmClient.EXPECT().GetTags(mock.Anything, mock.Anything).Return([]string{"1.1.0"}, nil)
+		helmClient.EXPECT().GetIndex(mock.AnythingOfType("bool"), mock.Anything).Return(nil, errors.New("OCI repo has no index"))
+		helmClient.EXPECT().ExtractChart("my-chart", "1.1.0", false, int64(0), false).Return("./testdata/my-chart", utilio.NopCloser, nil)
+		helmClient.EXPECT().CleanChartCache("my-chart", "1.1.0").Return(nil)
+		ociClient.EXPECT().GetTags(mock.Anything, mock.Anything).Return([]string{"1.1.0"}, nil)
+		ociClient.EXPECT().ResolveRevision(mock.Anything, mock.Anything, mock.Anything).Return("1.1.0", nil)
+		ociClient.EXPECT().Extract(mock.Anything, mock.Anything).Return("./testdata/my-chart", utilio.NopCloser, nil)
+		paths.EXPECT().Add(mock.Anything, mock.Anything).Return()
+		paths.EXPECT().GetPath(mock.Anything).Return(root, nil)
+		paths.EXPECT().GetPathIfExists(mock.Anything).Return(root)
+		paths.EXPECT().GetPaths().Return(map[string]string{"fake-nonce": root})
+	}, root)
+	// OCI repo (no https scheme) triggers "not yet supported" in provenance block
+	source := &v1alpha1.ApplicationSource{Chart: "my-chart", TargetRevision: ">= 1.0.0", RepoURL: "demo.goharbor.io"}
+	request := &apiclient.ManifestRequest{
+		Repo: &v1alpha1.Repository{Repo: "demo.goharbor.io", EnableOCI: true},
+		ApplicationSource: source, NoCache: true, ProjectName: "something",
+		ProjectSourceRepos: []string{"*"},
+		SourceIntegrity:    sourceIntegrityHelmProvenance,
+	}
+	res, err := service.GenerateManifest(t.Context(), request)
+	require.NoError(t, err)
+	require.NotNil(t, res.SourceIntegrityResult)
+	require.Error(t, res.SourceIntegrityResult.AsError())
+	assert.Contains(t, res.SourceIntegrityResult.AsError().Error(), "Helm OCI provenance verification not yet supported")
+}
+
+func TestHelmSourceIntegrity_ChartTgzPathFails(t *testing.T) {
+	root := t.TempDir()
+	service, _, _ := newServiceWithOpt(t, func(gitClient *gitmocks.Client, helmClient *helmmocks.Client, ociClient *ocimocks.Client, paths *iomocks.TempPaths) {
+		helmClient.EXPECT().GetIndex(mock.AnythingOfType("bool"), mock.Anything).Return(&helm.Index{Entries: map[string]helm.Entries{
+			"my-chart": {{Version: "1.1.0"}},
+		}}, nil)
+		helmClient.EXPECT().GetTags(mock.Anything, mock.Anything).Return(nil, nil)
+		helmClient.EXPECT().ExtractChart("my-chart", "1.1.0", false, int64(0), false).Return("./testdata/my-chart", utilio.NopCloser, nil)
+		helmClient.EXPECT().CleanChartCache("my-chart", "1.1.0").Return(nil)
+		helmClient.EXPECT().ChartTgzPath("my-chart", "1.1.0").Return("", errors.New("chart tgz not cached"))
+		ociClient.EXPECT().GetTags(mock.Anything, mock.Anything).Return(nil, nil)
+		ociClient.EXPECT().ResolveRevision(mock.Anything, mock.Anything, mock.Anything).Return("", nil)
+		paths.EXPECT().Add(mock.Anything, mock.Anything).Return()
+		paths.EXPECT().GetPath(mock.Anything).Return(root, nil)
+		paths.EXPECT().GetPathIfExists(mock.Anything).Return(root)
+		paths.EXPECT().GetPaths().Return(map[string]string{"fake-nonce": root})
+	}, root)
+	source := &v1alpha1.ApplicationSource{Chart: "my-chart", TargetRevision: ">= 1.0.0", RepoURL: "https://helm.example.com"}
+	request := &apiclient.ManifestRequest{
+		Repo: &v1alpha1.Repository{Repo: "https://helm.example.com"},
+		ApplicationSource: source, NoCache: true, ProjectName: "something",
+		ProjectSourceRepos: []string{"*"},
+		SourceIntegrity:    sourceIntegrityHelmProvenance,
+	}
+	res, err := service.GenerateManifest(t.Context(), request)
+	require.NoError(t, err)
+	require.NotNil(t, res.SourceIntegrityResult)
+	require.Error(t, res.SourceIntegrityResult.AsError())
+	assert.Contains(t, res.SourceIntegrityResult.AsError().Error(), "could not access chart for provenance verification")
+}
+
 func Test_newEnv(t *testing.T) {
 	assert.Equal(t, &v1alpha1.Env{
 		&v1alpha1.EnvEntry{Name: "ARGOCD_APP_NAME", Value: "my-app-name"},
@@ -2289,7 +2411,7 @@ func TestGenerateManifestsWithAppParameterFile(t *testing.T) {
 			// Try to pull from the cache with a `source` that does not include any overrides. Overrides should not be
 			// part of the cache key, because you can't get the overrides without a repo operation. And avoiding repo
 			// operations is the point of the cache.
-			err = service.cache.GetManifests(mock.Anything, source, v1alpha1.RefTargetRevisionMapping{}, &v1alpha1.ClusterInfo{}, "", "", "", "test", res, nil, "")
+			err = service.cache.GetManifests(mock.Anything, source, v1alpha1.RefTargetRevisionMapping{}, &v1alpha1.ClusterInfo{}, "", "", "", "test", res, nil, "", nil)
 			require.NoError(t, err)
 		})
 	})

@@ -323,16 +323,26 @@ func (c *Cache) UnlockGitReferences(repo string, lockId string) error {
 	return err
 }
 
+// sourceIntegrityCacheKey returns a stable string for the given SourceIntegrity so that different
+// project policies (e.g. provenance required vs mode none) get different manifest cache entries.
+func sourceIntegrityCacheKey(si *appv1.SourceIntegrity) string {
+	if si == nil {
+		return ""
+	}
+	b, _ := json.Marshal(si)
+	return fmt.Sprintf("|si:%d", hash.FNVa(string(b)))
+}
+
 // refSourceCommitSHAs is a list of resolved revisions for each ref source. This allows us to invalidate the cache
 // when someone pushes a commit to a source which is referenced from the main source (the one referred to by `revision`).
-func manifestCacheKey(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, namespace string, trackingMethod string, appLabelKey string, appName string, info ClusterRuntimeInfo, refSourceCommitSHAs ResolvedRevisions, installationID string) string {
+func manifestCacheKey(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, namespace string, trackingMethod string, appLabelKey string, appName string, info ClusterRuntimeInfo, refSourceCommitSHAs ResolvedRevisions, installationID string, sourceIntegrityKey string) string {
 	// TODO: this function is getting unwieldy. We should probably consolidate some of this stuff into a struct. For
 	//       example, revision could be part of ResolvedRevisions. And srcRefs is probably redundant now that
 	//       refSourceCommitSHAs has been added. We don't need to know the _target_ revisions of the referenced sources
 	//       when the _resolved_ revisions are already part of the key.
 
 	trackingKey := trackingKey(appLabelKey, trackingMethod)
-	key := fmt.Sprintf("mfst|%s|%s|%s|%s|%d", trackingKey, appName, revision, namespace, appSourceKey(appSrc, srcRefs, refSourceCommitSHAs)+clusterRuntimeInfoKey(info))
+	key := fmt.Sprintf("mfst|%s|%s|%s|%s|%d%s", trackingKey, appName, revision, namespace, appSourceKey(appSrc, srcRefs, refSourceCommitSHAs)+clusterRuntimeInfoKey(info), sourceIntegrityKey)
 	if installationID != "" {
 		key = fmt.Sprintf("%s|%s", key, installationID)
 	}
@@ -363,14 +373,16 @@ func LogDebugManifestCacheKeyFields(message string, reason string, revision stri
 	}
 }
 
-func (c *Cache) SetNewRevisionManifests(newRevision string, revision string, appSrc *appv1.ApplicationSource, oldSrcRefs appv1.RefTargetRevisionMapping, newSrcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, oldRefSourceCommitSHAs ResolvedRevisions, newRefSourceCommitSHAs ResolvedRevisions, installationID string) error {
-	oldKey := manifestCacheKey(revision, appSrc, oldSrcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, oldRefSourceCommitSHAs, installationID)
-	newKey := manifestCacheKey(newRevision, appSrc, newSrcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, newRefSourceCommitSHAs, installationID)
+func (c *Cache) SetNewRevisionManifests(newRevision string, revision string, appSrc *appv1.ApplicationSource, oldSrcRefs appv1.RefTargetRevisionMapping, newSrcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, oldRefSourceCommitSHAs ResolvedRevisions, newRefSourceCommitSHAs ResolvedRevisions, installationID string, sourceIntegrity *appv1.SourceIntegrity) error {
+	siKey := sourceIntegrityCacheKey(sourceIntegrity)
+	oldKey := manifestCacheKey(revision, appSrc, oldSrcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, oldRefSourceCommitSHAs, installationID, siKey)
+	newKey := manifestCacheKey(newRevision, appSrc, newSrcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, newRefSourceCommitSHAs, installationID, siKey)
 	return c.cache.RenameItem(oldKey, newKey, c.repoCacheExpiration)
 }
 
-func (c *Cache) GetManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, res *CachedManifestResponse, refSourceCommitSHAs ResolvedRevisions, installationID string) error {
-	err := c.cache.GetItem(manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID), res)
+func (c *Cache) GetManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, res *CachedManifestResponse, refSourceCommitSHAs ResolvedRevisions, installationID string, sourceIntegrity *appv1.SourceIntegrity) error {
+	siKey := sourceIntegrityCacheKey(sourceIntegrity)
+	err := c.cache.GetItem(manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID, siKey), res)
 	if err != nil {
 		return err
 	}
@@ -386,7 +398,7 @@ func (c *Cache) GetManifests(revision string, appSrc *appv1.ApplicationSource, s
 
 		LogDebugManifestCacheKeyFields("deleting manifests cache", "manifest hash did not match or cached response is empty", revision, appSrc, srcRefs, clusterInfo, namespace, trackingMethod, appLabelKey, appName, refSourceCommitSHAs)
 
-		err = c.DeleteManifests(revision, appSrc, srcRefs, clusterInfo, namespace, trackingMethod, appLabelKey, appName, refSourceCommitSHAs, installationID)
+		err = c.DeleteManifests(revision, appSrc, srcRefs, clusterInfo, namespace, trackingMethod, appLabelKey, appName, refSourceCommitSHAs, installationID, sourceIntegrity)
 		if err != nil {
 			return fmt.Errorf("unable to delete manifest after hash mismatch: %w", err)
 		}
@@ -406,7 +418,7 @@ func (c *Cache) GetManifests(revision string, appSrc *appv1.ApplicationSource, s
 	return nil
 }
 
-func (c *Cache) SetManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, res *CachedManifestResponse, refSourceCommitSHAs ResolvedRevisions, installationID string) error {
+func (c *Cache) SetManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, res *CachedManifestResponse, refSourceCommitSHAs ResolvedRevisions, installationID string, sourceIntegrity *appv1.SourceIntegrity) error {
 	// Generate and apply the cache entry hash, before writing
 	if res != nil {
 		res = res.shallowCopy()
@@ -417,8 +429,9 @@ func (c *Cache) SetManifests(revision string, appSrc *appv1.ApplicationSource, s
 		res.CacheEntryHash = hash
 	}
 
+	siKey := sourceIntegrityCacheKey(sourceIntegrity)
 	return c.cache.SetItem(
-		manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID),
+		manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID, siKey),
 		res,
 		&cacheutil.CacheActionOpts{
 			Expiration: c.repoCacheExpiration,
@@ -426,9 +439,10 @@ func (c *Cache) SetManifests(revision string, appSrc *appv1.ApplicationSource, s
 		})
 }
 
-func (c *Cache) DeleteManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace, trackingMethod, appLabelKey, appName string, refSourceCommitSHAs ResolvedRevisions, installationID string) error {
+func (c *Cache) DeleteManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace, trackingMethod, appLabelKey, appName string, refSourceCommitSHAs ResolvedRevisions, installationID string, sourceIntegrity *appv1.SourceIntegrity) error {
+	siKey := sourceIntegrityCacheKey(sourceIntegrity)
 	return c.cache.SetItem(
-		manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID),
+		manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs, installationID, siKey),
 		"",
 		&cacheutil.CacheActionOpts{Delete: true})
 }

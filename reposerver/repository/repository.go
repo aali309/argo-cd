@@ -450,7 +450,79 @@ func (s *Service) runRepoOperation(
 			}
 		}
 		return operation(chartPath, revision, revision, func() (*operationContext, error) {
-			return &operationContext{chartPath, nil}, nil
+			var sourceIntegrityResult *v1alpha1.SourceIntegrityCheckResult
+			var provWasFetched bool
+			var errVerify error
+			helmIntegrityRequired := sourceIntegrity != nil && sourceintegrity.HasCriteria(sourceIntegrity, *source)
+			if !helmIntegrityRequired && sourceIntegrity != nil {
+				sourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+					Name:     sourceintegrity.CheckNameHelmProvenance,
+					Problems: nil, // skipped: no policy applies
+				}}}
+				log.Infof("Helm chart %s@%s: no source integrity policy matches repo %q, skipping verification", source.Chart, revision, source.RepoURL)
+			}
+			if helmIntegrityRequired && source.IsHelmOci() {
+				sourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+					Name:     sourceintegrity.CheckNameHelmProvenance,
+					Problems: []string{"Helm OCI provenance verification not yet supported"},
+				}}}
+			} else if helmIntegrityRequired && !source.IsHelmOci() {
+				log.Infof("++++ Helm provenance: helmIntegrityRequired=true, fetching prov for %s@%s", source.Chart, revision)
+				if tgzPath, errTgz := helmClient.ChartTgzPath(source.Chart, revision); errTgz == nil {
+					if chartTgz, errRead := os.ReadFile(tgzPath); errRead == nil {
+						provContent, chartFilename, errProv := helmClient.FetchProvenance(source.Chart, revision)
+						provPresent := errProv == nil && len(provContent) > 0
+						provWasFetched = provPresent
+						if errProv != nil {
+							log.Warnf("++++ Helm provenance: FetchProvenance FAILED (prov NOT available): %v", errProv)
+						} else if !provPresent {
+							log.Warnf("++++ Helm provenance: FetchProvenance returned empty content (len=%d) - prov NOT available", len(provContent))
+						} else {
+							log.Infof("++++ Helm provenance: prov fetched OK, len=%d, chartFilename=%s", len(provContent), chartFilename)
+						}
+						repoURLForPolicy := source.RepoURL
+						log.Infof("++++ Helm provenance: calling VerifyHelm repoURL=%q", repoURLForPolicy)
+						sourceIntegrityResult, errVerify = sourceintegrity.VerifyHelm(sourceIntegrity, repoURLForPolicy, chartTgz, provContent, chartFilename)
+						verified := errVerify == nil && sourceIntegrityResult != nil && sourceIntegrityResult.AsError() == nil
+						log.Infof("++++ Helm provenance: VerifyHelm returned result=%v (nil=%v), errVerify=%v, verified=%v", sourceIntegrityResult != nil, sourceIntegrityResult == nil, errVerify, verified)
+						if sourceIntegrityResult != nil && sourceIntegrityResult.AsError() != nil {
+							log.Warnf("++++ Helm provenance: verification FAILED: %v", sourceIntegrityResult.AsError())
+						}
+						log.WithFields(log.Fields{
+							"chart":       source.Chart,
+							"revision":    revision,
+							"repo":        repo.Repo,
+							"provPresent": provPresent,
+							"verified":    verified,
+						}).Infof("Helm provenance: .prov present=%v, verification passed=%v", provPresent, verified)
+						if !verified && errVerify != nil {
+							log.Debugf("Helm provenance verification failed: %v", errVerify)
+						}
+					} else {
+						sourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+							Name:     sourceintegrity.CheckNameHelmProvenance,
+							Problems: []string{"could not read chart for provenance verification: " + errRead.Error()},
+						}}}
+					}
+				} else {
+					sourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+						Name:     sourceintegrity.CheckNameHelmProvenance,
+						Problems: []string{"could not access chart for provenance verification: " + errTgz.Error()},
+					}}}
+				}
+			}
+			if sourceIntegrity != nil && sourceIntegrityResult == nil {
+				fallbackMsg := "provenance file (.prov) is required but missing"
+				if provWasFetched {
+					fallbackMsg = "source integrity verification produced no result (policy may not match or internal error)"
+				}
+				sourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+					Name:     sourceintegrity.CheckNameHelmProvenance,
+					Problems: []string{fallbackMsg},
+				}}}
+				log.Warnf("++++ Helm chart %s@%s: FALLBACK - VerifyHelm returned nil; provWasFetched=%v; msg=%s", source.Chart, revision, provWasFetched, fallbackMsg)
+			}
+			return &operationContext{chartPath, sourceIntegrityResult}, nil
 		})
 	}
 	closer, err := s.repoLock.Lock(gitClient.Root(), revision, settings.allowConcurrent, func() (goio.Closer, error) {
@@ -512,6 +584,13 @@ func (s *Service) runRepoOperation(
 		sourceIntegrityResult, err := sourceintegrity.VerifyGit(sourceIntegrity, gitClient, originalRevision)
 		if err != nil {
 			return nil, err
+		}
+		// No policy matches: VerifyGit returns nil; return skipped result so controller does not block.
+		if sourceIntegrityResult == nil && sourceIntegrity != nil {
+			sourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+				Name:     "GIT/GPG",
+				Problems: nil, // skipped: no policy applies
+			}}}
 		}
 
 		return &operationContext{appPath, sourceIntegrityResult}, nil
@@ -873,7 +952,9 @@ func (s *Service) runManifestGenAsync(ctx context.Context, repoRoot, commitSHA, 
 			}
 		}
 
-		manifestGenResult, err = GenerateManifests(ctx, opContext.appPath, repoRoot, commitSHA, q, false, s.gitCredsStore, s.initConstants.MaxCombinedDirectoryManifestsSize, s.gitRepoPaths, WithCMPTarDoneChannel(ch.tarDoneCh), WithCMPTarExcludedGlobs(s.initConstants.CMPTarExcludedGlobs), WithCMPUseManifestGeneratePaths(s.initConstants.CMPUseManifestGeneratePaths))
+		manifestGenResult, err = GenerateManifests(ctx, opContext.appPath, repoRoot, commitSHA, q, false, s.gitCredsStore, s.initConstants.MaxCombinedDirectoryManifestsSize, s.gitRepoPaths,
+			WithCMPTarDoneChannel(ch.tarDoneCh), WithCMPTarExcludedGlobs(s.initConstants.CMPTarExcludedGlobs), WithCMPUseManifestGeneratePaths(s.initConstants.CMPUseManifestGeneratePaths),
+			WithSourceIntegrityResult(opContext.sourceIntegrityResult))
 	}
 	refSourceCommitSHAs := make(map[string]string)
 	if len(repoRefs) > 0 {
@@ -894,7 +975,7 @@ func (s *Service) runManifestGenAsync(ctx context.Context, repoRoot, commitSHA, 
 			// Retrieve a new copy (if available) of the cached response: this ensures we are updating the latest copy of the cache,
 			// rather than a copy of the cache that occurred before (a potentially lengthy) manifest generation.
 			innerRes := &cache.CachedManifestResponse{}
-			cacheErr := s.cache.GetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, innerRes, refSourceCommitSHAs, q.InstallationID)
+			cacheErr := s.cache.GetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, innerRes, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 			if cacheErr != nil && !errors.Is(cacheErr, cache.ErrCacheMiss) {
 				logCtx.Warnf("manifest cache get error %s: %v", appSourceCopy.String(), cacheErr)
 				ch.errCh <- cacheErr
@@ -912,7 +993,7 @@ func (s *Service) runManifestGenAsync(ctx context.Context, repoRoot, commitSHA, 
 			// Update the cache to include failure information
 			innerRes.NumberOfConsecutiveFailures++
 			innerRes.MostRecentError = err.Error()
-			cacheErr = s.cache.SetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, innerRes, refSourceCommitSHAs, q.InstallationID)
+			cacheErr = s.cache.SetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, innerRes, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 
 			if cacheErr != nil {
 				logCtx.Warnf("manifest cache set error %s: %v", appSourceCopy.String(), cacheErr)
@@ -936,9 +1017,24 @@ func (s *Service) runManifestGenAsync(ctx context.Context, repoRoot, commitSHA, 
 	}
 	manifestGenResult.Revision = commitSHA
 	manifestGenResult.SourceIntegrityResult = opContext.sourceIntegrityResult
-	err = s.cache.SetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &manifestGenCacheEntry, refSourceCommitSHAs, q.InstallationID)
+	// If request requires source integrity but we have no result, set an explicit error so controller never receives nil
+	if q.SourceIntegrity != nil && manifestGenResult.SourceIntegrityResult == nil {
+		manifestGenResult.SourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+			Name:     sourceintegrity.CheckNameHelmProvenance,
+			Problems: []string{"source integrity verification result was not populated (internal error); refresh or retry"},
+		}}}
+		log.Warnf("manifest response missing SourceIntegrityResult for app %q despite request having SourceIntegrity; setting fallback error", q.AppName)
+	}
+	err = s.cache.SetManifests(cacheKey, appSourceCopy, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &manifestGenCacheEntry, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 	if err != nil {
 		log.Warnf("manifest cache set error %s/%s: %v", appSourceCopy.String(), cacheKey, err)
+	}
+	// Ensure SourceIntegrityResult is set on the response immediately before sending to the controller
+	if manifestGenResult.SourceIntegrityResult == nil && q.SourceIntegrity != nil {
+		manifestGenResult.SourceIntegrityResult = &v1alpha1.SourceIntegrityCheckResult{Checks: []v1alpha1.SourceIntegrityCheckResultItem{{
+			Name:     sourceintegrity.CheckNameHelmProvenance,
+			Problems: []string{"source integrity verification result was not populated (internal error); refresh or retry"},
+		}}}
 	}
 	ch.responseCh <- manifestGenCacheEntry.ManifestResponse
 }
@@ -953,7 +1049,7 @@ func (s *Service) getManifestCacheEntry(cacheKey string, q *apiclient.ManifestRe
 	cache.LogDebugManifestCacheKeyFields("getting manifests cache", "GenerateManifest API call", cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs)
 
 	res := cache.CachedManifestResponse{}
-	err := s.cache.GetManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &res, refSourceCommitSHAs, q.InstallationID)
+	err := s.cache.GetManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &res, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 	if err == nil {
 		// The cache contains an existing value
 
@@ -970,7 +1066,7 @@ func (s *Service) getManifestCacheEntry(cacheKey string, q *apiclient.ManifestRe
 						cache.LogDebugManifestCacheKeyFields("deleting manifests cache", "manifest hash did not match or cached response is empty", cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs)
 
 						// We can now try again, so reset the cache state and run the operation below
-						err = s.cache.DeleteManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs, q.InstallationID)
+						err = s.cache.DeleteManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 						if err != nil {
 							log.Warnf("manifest cache set error %s/%s: %v", q.ApplicationSource.String(), cacheKey, err)
 						}
@@ -985,7 +1081,7 @@ func (s *Service) getManifestCacheEntry(cacheKey string, q *apiclient.ManifestRe
 						cache.LogDebugManifestCacheKeyFields("deleting manifests cache", "reset after paused generation count", cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs)
 
 						// We can now try again, so reset the error cache state and run the operation below
-						err = s.cache.DeleteManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs, q.InstallationID)
+						err = s.cache.DeleteManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 						if err != nil {
 							log.Warnf("manifest cache set error %s/%s: %v", q.ApplicationSource.String(), cacheKey, err)
 						}
@@ -1006,7 +1102,7 @@ func (s *Service) getManifestCacheEntry(cacheKey string, q *apiclient.ManifestRe
 					// Increment the number of returned cached responses and push that new value to the cache
 					// (if we have not already done so previously in this function)
 					res.NumberOfCachedResponsesReturned++
-					err = s.cache.SetManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &res, refSourceCommitSHAs, q.InstallationID)
+					err = s.cache.SetManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, &res, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
 					if err != nil {
 						log.Warnf("manifest cache set error %s/%s: %v", q.ApplicationSource.String(), cacheKey, err)
 					}
@@ -1017,18 +1113,30 @@ func (s *Service) getManifestCacheEntry(cacheKey string, q *apiclient.ManifestRe
 
 			// Otherwise we are not yet in the manifest generation error state, and not enough consecutive errors have
 			// yet occurred to put us in that state.
-			log.Infof("manifest error cache miss: %s/%s", q.ApplicationSource.String(), cacheKey)
+			log.Infof("++++ manifest error cache miss: %s/%s", q.ApplicationSource.String(), cacheKey)
 			return false, res.ManifestResponse, nil
 		}
 
-		log.Infof("manifest cache hit: %s/%s", q.ApplicationSource.String(), cacheKey)
+		// Treat as miss if request requires source integrity but cached response lacks SourceIntegrityResult (stale entry).
+		requestHasSourceIntegrity := q.SourceIntegrity != nil
+		responseHasSourceIntegrityResult := res.ManifestResponse != nil && res.ManifestResponse.SourceIntegrityResult != nil
+		log.WithFields(log.Fields{
+			"appName":                          q.AppName,
+			"requestHasSourceIntegrity":        requestHasSourceIntegrity,
+			"responseHasSourceIntegrityResult": responseHasSourceIntegrityResult,
+		}).Infof("++++ manifest cache hit: %s/%s", q.ApplicationSource.String(), cacheKey)
+		if requestHasSourceIntegrity && !responseHasSourceIntegrityResult {
+			log.Warnf("manifest cache hit for app %q: request has SourceIntegrity but cached response has no SourceIntegrityResult (stale entry), treating as cache miss", q.AppName)
+			_ = s.cache.DeleteManifests(cacheKey, q.ApplicationSource, q.RefSources, q, q.Namespace, q.TrackingMethod, q.AppLabelKey, q.AppName, refSourceCommitSHAs, q.InstallationID, q.SourceIntegrity)
+			return false, nil, nil
+		}
 		return true, res.ManifestResponse, nil
 	}
 
 	if !errors.Is(err, cache.ErrCacheMiss) {
 		log.Warnf("manifest cache error %s: %v", q.ApplicationSource.String(), err)
 	} else {
-		log.Infof("manifest cache miss: %s/%s", q.ApplicationSource.String(), cacheKey)
+		log.WithField("requestHasSourceIntegrity", q.SourceIntegrity != nil).Infof("++++ manifest cache miss: %s/%s", q.ApplicationSource.String(), cacheKey)
 	}
 
 	return false, nil, nil
@@ -1456,6 +1564,7 @@ type (
 		cmpTarDoneCh                chan<- bool
 		cmpTarExcludedGlobs         []string
 		cmpUseManifestGeneratePaths bool
+		sourceIntegrityResult       *v1alpha1.SourceIntegrityCheckResult
 	}
 )
 
@@ -1489,6 +1598,13 @@ func WithCMPTarExcludedGlobs(excludedGlobs []string) GenerateManifestOpt {
 func WithCMPUseManifestGeneratePaths(enabled bool) GenerateManifestOpt {
 	return func(o *generateManifestOpt) {
 		o.cmpUseManifestGeneratePaths = enabled
+	}
+}
+
+// WithSourceIntegrityResult sets the pre-computed source integrity result on the manifest response.
+func WithSourceIntegrityResult(result *v1alpha1.SourceIntegrityCheckResult) GenerateManifestOpt {
+	return func(o *generateManifestOpt) {
+		o.sourceIntegrityResult = result
 	}
 }
 
@@ -1599,11 +1715,15 @@ func GenerateManifests(ctx context.Context, appPath, repoRoot, revision string, 
 		}
 	}
 
-	return &apiclient.ManifestResponse{
+	resp := &apiclient.ManifestResponse{
 		Manifests:  manifests,
 		SourceType: string(appSourceType),
 		Commands:   commands,
-	}, nil
+	}
+	if opt.sourceIntegrityResult != nil {
+		resp.SourceIntegrityResult = opt.sourceIntegrityResult
+	}
+	return resp, nil
 }
 
 func newEnv(q *apiclient.ManifestRequest, revision string) *v1alpha1.Env {
@@ -3194,7 +3314,7 @@ func (s *Service) UpdateRevisionForPaths(_ context.Context, request *apiclient.U
 }
 
 func (s *Service) updateCachedRevision(logCtx *log.Entry, oldRev string, newRev string, request *apiclient.UpdateRevisionForPathsRequest, oldRepoRefs map[string]string, newRepoRefs map[string]string) error {
-	err := s.cache.SetNewRevisionManifests(newRev, oldRev, request.ApplicationSource, request.RefSources, request.RefSources, request, request.Namespace, request.TrackingMethod, request.AppLabelKey, request.AppName, oldRepoRefs, newRepoRefs, request.InstallationID)
+	err := s.cache.SetNewRevisionManifests(newRev, oldRev, request.ApplicationSource, request.RefSources, request.RefSources, request, request.Namespace, request.TrackingMethod, request.AppLabelKey, request.AppName, oldRepoRefs, newRepoRefs, request.InstallationID, nil)
 	if err != nil {
 		if errors.Is(err, cache.ErrCacheMiss) {
 			logCtx.Debugf("manifest cache miss during comparison for application %s in repo %s from revision %s", request.AppName, request.GetRepo().Repo, oldRev)
