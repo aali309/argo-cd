@@ -41,6 +41,7 @@ import (
 
 	"github.com/argoproj/argo-cd/v3/common"
 	certutil "github.com/argoproj/argo-cd/v3/util/cert"
+	"github.com/argoproj/argo-cd/v3/util/gpg"
 	"github.com/argoproj/argo-cd/v3/util/env"
 	executil "github.com/argoproj/argo-cd/v3/util/exec"
 	"github.com/argoproj/argo-cd/v3/util/proxy"
@@ -1096,21 +1097,14 @@ func evaluateGpgSignStatus(cmdErr error, tagGpgOut string) (result GPGVerificati
 		}
 	}
 
-	// https://github.com/gpg/gnupg/blob/master/doc/DETAILS#general-status-codes
-	re := regexp.MustCompile(`\[GNUPG:] (GOODSIG|BADSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|ERRSIG) ([0-9A-F]+) `)
-	for line := range strings.Lines(tagGpgOut) {
-		match := re.FindAllStringSubmatch(line, -1)
-		switch len(match) {
-		case 0:
-			continue
-		case 1:
-			return gpgVerificationFromGpgCode(match[0][1]), match[0][2], nil
-		default:
-			return "", "", fmt.Errorf("too many matches parsing line %q", line)
+	code, keyID, err := gpg.ParseStatusOutputStrict(tagGpgOut)
+	if err != nil {
+		if errors.Is(err, gpg.ErrNoStatusFound) {
+			return "", "", fmt.Errorf("unexpected `git verify-tag --raw` output: %q", tagGpgOut)
 		}
+		return "", "", err
 	}
-
-	return "", "", fmt.Errorf("unexpected `git verify-tag --raw` output: %q", tagGpgOut)
+	return gpgVerificationFromGpgCode(code), keyID, nil
 }
 
 func (m *nativeGitClient) LsSignatures(unresolvedRevision string, deep bool) ([]RevisionSignatureInfo, error) {
