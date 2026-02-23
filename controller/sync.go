@@ -37,7 +37,6 @@ import (
 	kubeutil "github.com/argoproj/argo-cd/v3/util/kube"
 	logutils "github.com/argoproj/argo-cd/v3/util/log"
 	"github.com/argoproj/argo-cd/v3/util/lua"
-	"github.com/argoproj/argo-cd/v3/util/sourceintegrity"
 )
 
 const (
@@ -158,22 +157,8 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 		revisions = []string{state.SyncResult.Revision}
 	}
 
-	// Fail immediately when app already has blocking conditions (e.g. provenance required but missing).
-	if sourceintegrity.HasCriteria(project.EffectiveSourceIntegrity(), sources...) {
-		if errConds := app.Status.GetConditions(map[v1alpha1.ApplicationConditionType]bool{
-			v1alpha1.ApplicationConditionComparisonError:  true,
-			v1alpha1.ApplicationConditionInvalidSpecError: true,
-		}); len(errConds) > 0 {
-			logEntry.Warnf("++++ blocking sync: existing condition %s: %s (skipping CompareAppState)", errConds[0].Type, errConds[0].Message)
-			state.Phase = common.OperationError
-			state.Message = argo.FormatAppConditions(errConds)
-			return
-		}
-	}
-
-	// When project requires source integrity, bypass manifest cache so sync uses fresh data
-	noCache := sourceintegrity.HasCriteria(project.EffectiveSourceIntegrity(), sources...)
-	compareResult, err := m.CompareAppState(app, project, revisions, sources, noCache, true, syncOp.Manifests, isMultiSourceSync)
+	// ignore error if CompareStateRepoError, this shouldn't happen as noRevisionCache is true
+	compareResult, err := m.CompareAppState(app, project, revisions, sources, false, true, syncOp.Manifests, isMultiSourceSync)
 	if err != nil && !stderrors.Is(err, ErrCompareStateRepo) {
 		state.Phase = common.OperationError
 		state.Message = err.Error()
@@ -193,12 +178,11 @@ func (m *appStateManager) SyncAppState(app *v1alpha1.Application, project *v1alp
 		return
 	}
 
-	// If there are any comparison or spec errors, do not perform the operation.
-	if errConditions := compareResult.GetBlockingConditions(); len(errConditions) > 0 {
-		logEntry := log.WithFields(applog.GetAppLogFields(app))
-		for _, c := range errConditions {
-			logEntry.Warnf("++++ blocking sync: condition %s: %s", c.Type, c.Message)
-		}
+	// If there are any comparison or spec errors error conditions do not perform the operation
+	if errConditions := app.Status.GetConditions(map[v1alpha1.ApplicationConditionType]bool{
+		v1alpha1.ApplicationConditionComparisonError:  true,
+		v1alpha1.ApplicationConditionInvalidSpecError: true,
+	}); len(errConditions) > 0 {
 		state.Phase = common.OperationError
 		state.Message = argo.FormatAppConditions(errConditions)
 		return
