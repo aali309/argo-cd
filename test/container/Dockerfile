@@ -1,4 +1,4 @@
-FROM docker.io/library/redis:8.6.0@sha256:7b6fb55d8b0adcd77269dc52b3cfffe5f59ca5d43dec3c90dbe18aacce7942e1 AS redis
+FROM docker.io/library/redis:8.6.1@sha256:a019c005570189bb038155c1dfb1a269b59b83f9ceee22fd5f42de205ac19c06 AS redis
 
 # There are libraries we will want to copy from here in the final stage of the
 # build, but the COPY directive does not have a way to determine system
@@ -8,13 +8,13 @@ RUN ln -s /usr/lib/$(uname -m)-linux-gnu /usr/lib/linux-gnu
 # Please make sure to also check the contained yarn version and update the references below when upgrading this image's version
 FROM docker.io/library/node:22.9.0@sha256:8398ea18b8b72817c84af283f72daed9629af2958c4f618fe6db4f453c5c9328 AS node
 
-FROM docker.io/library/golang:1.26.0@sha256:c83e68f3ebb6943a2904fa66348867d108119890a2c6a2e6f07b38d0eb6c25c5 AS golang
+FROM docker.io/library/golang:1.26.1@sha256:c7e98cc0fd4dfb71ee7465fee6c9a5f079163307e4bf141b336bb9dae00159a5 AS golang
 
 FROM docker.io/library/registry:3.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e AS registry
 
 FROM docker.io/bitnamilegacy/kubectl:1.32@sha256:9524faf8e3cefb47fa28244a5d15f95ec21a73d963273798e593e61f80712333 AS kubectl
 
-FROM docker.io/library/ubuntu:26.04@sha256:4095ef613201918336b5d7d00be15d8b09c72ddb77c80bca249c255887a64d87
+FROM docker.io/library/ubuntu:26.04@sha256:5798086f1a3a79f93e33f22d50cb326ebe769272cb84f646259d4995c019877b
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -28,7 +28,6 @@ RUN  apt-get update && apt-get install --fix-missing --no-install-recommends -y 
     nginx \
     fcgiwrap \
     git \
-    git-lfs \
     gpg \
     gpg-agent \
     jq \
@@ -71,6 +70,7 @@ RUN ./install.sh helm && \
     ./install.sh codegen-go-tools && \
     ./install.sh lint-tools && \
     ./install.sh gotestsum && \
+    ./install.sh git-lfs && \
     go install github.com/mattn/goreman@latest && \
     go install github.com/kisielk/godepgraph@latest && \
     go install github.com/jstemmer/go-junit-report@latest && \

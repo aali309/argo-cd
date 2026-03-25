@@ -168,8 +168,8 @@ func (_c *Client_ChangedFiles_Call) RunAndReturn(run func(revision string, targe
 }
 
 // Checkout provides a mock function for the type Client
-func (_mock *Client) Checkout(revision string, submoduleEnabled bool) (string, error) {
-	ret := _mock.Called(revision, submoduleEnabled)
+func (_mock *Client) Checkout(revision string, submoduleEnabled bool, cleanState bool) (string, error) {
+	ret := _mock.Called(revision, submoduleEnabled, cleanState)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Checkout")
@@ -177,16 +177,16 @@ func (_mock *Client) Checkout(revision string, submoduleEnabled bool) (string, e
 
 	var r0 string
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(string, bool) (string, error)); ok {
-		return returnFunc(revision, submoduleEnabled)
+	if returnFunc, ok := ret.Get(0).(func(string, bool, bool) (string, error)); ok {
+		return returnFunc(revision, submoduleEnabled, cleanState)
 	}
-	if returnFunc, ok := ret.Get(0).(func(string, bool) string); ok {
-		r0 = returnFunc(revision, submoduleEnabled)
+	if returnFunc, ok := ret.Get(0).(func(string, bool, bool) string); ok {
+		r0 = returnFunc(revision, submoduleEnabled, cleanState)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
-	if returnFunc, ok := ret.Get(1).(func(string, bool) error); ok {
-		r1 = returnFunc(revision, submoduleEnabled)
+	if returnFunc, ok := ret.Get(1).(func(string, bool, bool) error); ok {
+		r1 = returnFunc(revision, submoduleEnabled, cleanState)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -201,11 +201,12 @@ type Client_Checkout_Call struct {
 // Checkout is a helper method to define mock.On call
 //   - revision string
 //   - submoduleEnabled bool
-func (_e *Client_Expecter) Checkout(revision interface{}, submoduleEnabled interface{}) *Client_Checkout_Call {
-	return &Client_Checkout_Call{Call: _e.mock.On("Checkout", revision, submoduleEnabled)}
+//   - cleanState bool
+func (_e *Client_Expecter) Checkout(revision interface{}, submoduleEnabled interface{}, cleanState interface{}) *Client_Checkout_Call {
+	return &Client_Checkout_Call{Call: _e.mock.On("Checkout", revision, submoduleEnabled, cleanState)}
 }
 
-func (_c *Client_Checkout_Call) Run(run func(revision string, submoduleEnabled bool)) *Client_Checkout_Call {
+func (_c *Client_Checkout_Call) Run(run func(revision string, submoduleEnabled bool, cleanState bool)) *Client_Checkout_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 string
 		if args[0] != nil {
@@ -215,9 +216,14 @@ func (_c *Client_Checkout_Call) Run(run func(revision string, submoduleEnabled b
 		if args[1] != nil {
 			arg1 = args[1].(bool)
 		}
+		var arg2 bool
+		if args[2] != nil {
+			arg2 = args[2].(bool)
+		}
 		run(
 			arg0,
 			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -228,7 +234,7 @@ func (_c *Client_Checkout_Call) Return(s string, err error) *Client_Checkout_Cal
 	return _c
 }
 
-func (_c *Client_Checkout_Call) RunAndReturn(run func(revision string, submoduleEnabled bool) (string, error)) *Client_Checkout_Call {
+func (_c *Client_Checkout_Call) RunAndReturn(run func(revision string, submoduleEnabled bool, cleanState bool) (string, error)) *Client_Checkout_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1441,6 +1447,66 @@ func (_c *Client_Submodule_Call) Return(err error) *Client_Submodule_Call {
 }
 
 func (_c *Client_Submodule_Call) RunAndReturn(run func() error) *Client_Submodule_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// VerifyCommitSignature provides a mock function for the type Client
+func (_mock *Client) VerifyCommitSignature(s string) (string, error) {
+	ret := _mock.Called(s)
+
+	if len(ret) == 0 {
+		panic("no return value specified for VerifyCommitSignature")
+	}
+
+	var r0 string
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string) (string, error)); ok {
+		return returnFunc(s)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string) string); ok {
+		r0 = returnFunc(s)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	if returnFunc, ok := ret.Get(1).(func(string) error); ok {
+		r1 = returnFunc(s)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Client_VerifyCommitSignature_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'VerifyCommitSignature'
+type Client_VerifyCommitSignature_Call struct {
+	*mock.Call
+}
+
+// VerifyCommitSignature is a helper method to define mock.On call
+//   - s string
+func (_e *Client_Expecter) VerifyCommitSignature(s interface{}) *Client_VerifyCommitSignature_Call {
+	return &Client_VerifyCommitSignature_Call{Call: _e.mock.On("VerifyCommitSignature", s)}
+}
+
+func (_c *Client_VerifyCommitSignature_Call) Run(run func(s string)) *Client_VerifyCommitSignature_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_VerifyCommitSignature_Call) Return(s1 string, err error) *Client_VerifyCommitSignature_Call {
+	_c.Call.Return(s1, err)
+	return _c
+}
+
+func (_c *Client_VerifyCommitSignature_Call) RunAndReturn(run func(s string) (string, error)) *Client_VerifyCommitSignature_Call {
 	_c.Call.Return(run)
 	return _c
 }

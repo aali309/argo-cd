@@ -2,7 +2,6 @@ package sourceintegrity
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/sirupsen/logrus"
@@ -65,7 +64,7 @@ func TestGPGUnknownMode(t *testing.T) {
 	gitClient.EXPECT().CommitSHA().Return("DEADBEEF", nil)
 
 	s := &v1alpha1.SourceIntegrityGitPolicyGPG{Mode: "foobar", Keys: []string{}}
-	result, err := verify(s, gitClient, "https://github.com/argoproj/argo-cd.git")
+	result, _, err := verify(s, gitClient, "https://github.com/argoproj/argo-cd.git")
 	require.ErrorContains(t, err, `unknown GPG mode "foobar" configured for GIT source integrity`)
 	assert.Nil(t, result)
 }
@@ -230,11 +229,12 @@ func TestComparingWithGPGFingerprint(t *testing.T) {
 
 	gpgWithTag := &v1alpha1.SourceIntegrityGitPolicyGPG{Mode: v1alpha1.SourceIntegrityGitPolicyGPGModeHead, Keys: []string{fingerprint}}
 	// And verifying a given revision
-	result, err := verify(gpgWithTag, gitClient, "1.0")
+	result, legacy, err := verify(gpgWithTag, gitClient, "1.0")
 	require.NoError(t, err)
 
 	assert.True(t, result.IsValid())
-	assert.NoError(t, result.AsError())
+	require.NoError(t, result.AsError())
+	assert.Equal(t, "Good signature from ignored key D56C4FCA57A46444", legacy)
 }
 
 func TestGPGHeadValid(t *testing.T) {
@@ -281,13 +281,14 @@ func TestGPGHeadValid(t *testing.T) {
 				Keys: []string{keyId, "0000000000000000"},
 			}
 			// And verifying a given revision
-			result, err := verify(gpgWithTag, gitClient, test.revision)
+			result, legacy, err := verify(gpgWithTag, gitClient, test.revision)
 			require.NoError(t, err)
 			// Then it is checked and valid
 			assert.True(t, result.IsValid())
 			assert.Equal(t, []string{"GIT/GPG"}, result.PassedChecks())
 			test.check(gitClient, logger)
 			require.NoError(t, result.AsError())
+			assert.Equal(t, "Good signature from ignored key 4cfe068f80b1681b", legacy)
 		})
 	}
 }
@@ -313,6 +314,7 @@ func TestDescribeProblems(t *testing.T) {
 		gpg      *v1alpha1.SourceIntegrityGitPolicyGPG
 		sigs     []git.RevisionSignatureInfo
 		expected []string
+		legacy   string
 	}{
 		{
 			name: "report only problems",
@@ -326,6 +328,7 @@ func TestDescribeProblems(t *testing.T) {
 				"Failed verifying revision " + r + " by '" + a + "': signed with revoked key (key_id=bad)",
 				"Failed verifying revision " + r + " by '" + a + "': signed with untrusted key (key_id=also_bad)",
 			},
+			legacy: "Invalid signature from Commit Author <nereply@acme.com> key bad",
 		},
 		{
 			name: "collapse problems of the same key",
@@ -340,6 +343,7 @@ func TestDescribeProblems(t *testing.T) {
 				"Failed verifying revision " + r + " by '" + a + "': signed with revoked key (key_id=bad)",
 				"Failed verifying revision " + r + " by '" + a + "': signed with untrusted key (key_id=also_bad)",
 			},
+			legacy: "Invalid signature from Commit Author <nereply@acme.com> key bad",
 		},
 		{
 			name: "do not collapse unsigned commits, as they can differ by author",
@@ -354,6 +358,7 @@ func TestDescribeProblems(t *testing.T) {
 				"Failed verifying revision " + r + " by '" + a + "': unsigned (key_id=)",
 				"Failed verifying revision " + r + " by '" + a + "': unsigned (key_id=)",
 			},
+			legacy: "Revision is not signed.",
 		},
 		{
 			name: "Report first ten problems only",
@@ -372,7 +377,7 @@ func TestDescribeProblems(t *testing.T) {
 				// the rest is cut off
 				sig("OMG", git.GPGVerificationResultBad),
 				sig("nope", git.GPGVerificationResultBad),
-				sig("you_gott_be_kidding_me", git.GPGVerificationResultBad),
+				sig("you_gotta_be_kidding_me", git.GPGVerificationResultBad),
 			},
 			expected: []string{
 				"Failed verifying revision " + r + " by '" + a + "': signed with revoked key (key_id=revoked)",
@@ -386,13 +391,15 @@ func TestDescribeProblems(t *testing.T) {
 				"Failed verifying revision " + r + " by '" + a + "': bad signature (key_id=more_bad)",
 				"Failed verifying revision " + r + " by '" + a + "': bad signature (key_id=outright_terrible)",
 			},
+			legacy: "Invalid signature from Commit Author <nereply@acme.com> key revoked",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			problems := describeProblems(tt.gpg, tt.sigs)
+			problems, legacy := describeProblems(tt.gpg, tt.sigs)
 			assert.Equal(t, tt.expected, problems)
+			assert.Equal(t, tt.legacy, legacy)
 		})
 	}
 }
@@ -505,7 +512,7 @@ GIT/GPG: Failed verifying revision %s by 'ignored': signed with unallowed key (k
 				Keys: []string{keyOfFirst, keyOfSecond},
 			}
 			// And verifying a given revision
-			result, err := verify(gpgWithTag, gitClient, test.revision)
+			result, legacy, err := verify(gpgWithTag, gitClient, test.revision)
 			require.NoError(t, err)
 
 			// Then it is checked and valid
@@ -513,163 +520,16 @@ GIT/GPG: Failed verifying revision %s by 'ignored': signed with unallowed key (k
 			if test.expectedErr == "" {
 				require.NoError(t, err)
 				assert.True(t, result.IsValid())
+				assert.Contains(t, legacy, "Good signature from ")
 			} else {
 				require.Error(t, err)
 				assert.Equal(t, test.expectedErr, err.Error())
 				assert.False(t, result.IsValid())
+				// Confusing but correct. Signature is good, but not allowed in project so this should be rejected.
+				assert.Contains(t, legacy, "Good signature from ")
 			}
 			assert.Equal(t, test.expectedPassed, result.PassedChecks())
 			assert.Empty(t, logger.GetEntries())
 		})
 	}
-}
-
-func TestVerifyHelmMultiplePolicies(t *testing.T) {
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{
-				{Repos: []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.bitnami.com/*"}}, Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"A"}}},
-				{Repos: []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.bitnami.com/bitnami"}}, Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"B"}}},
-			},
-		},
-	}
-	result, err := VerifyHelm(si, "https://charts.bitnami.com/bitnami", []byte{}, []byte{}, "chart.tgz")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Error(t, result.AsError())
-	assert.Contains(t, result.AsError().Error(), "multiple (2) Helm source integrity policies found for repo URL")
-}
-
-func TestVerifyHelmUnknownMode(t *testing.T) {
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.example.com/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceMode("invalid"), Keys: []string{"A"}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "https://charts.example.com/repo", []byte{}, []byte{1}, "chart.tgz")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Error(t, result.AsError())
-	assert.Contains(t, result.AsError().Error(), `unknown Helm source integrity provenance mode "invalid"`)
-}
-
-func TestVerifyHelmProvenanceRequiredButMissing(t *testing.T) {
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.example.com/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"0000000000000000"}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "https://charts.example.com/repo", []byte("chart"), nil, "chart.tgz")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Error(t, result.AsError())
-	assert.Contains(t, result.AsError().Error(), "provenance file (.prov) is required but missing")
-}
-
-func TestVerifyHelmModeNone(t *testing.T) {
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.example.com/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeNone, Keys: []string{}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "https://charts.example.com/repo", []byte{}, nil, "chart.tgz")
-	require.NoError(t, err)
-	require.Nil(t, result, "mode none skips verification, returns nil")
-}
-
-func TestVerifyHelmReturnsNilWhenNoPolicyMatch(t *testing.T) {
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.other.com/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"A"}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "https://charts.example.com/repo", []byte{}, []byte{}, "chart.tgz")
-	require.NoError(t, err)
-	require.Nil(t, result, "no matching policy returns nil")
-}
-
-func TestVerifyHelmReturnsNilWhenNilSI(t *testing.T) {
-	result, err := VerifyHelm(nil, "https://charts.example.com/repo", []byte{}, []byte{}, "chart.tgz")
-	require.NoError(t, err)
-	require.Nil(t, result)
-}
-
-func TestVerifyHelmPassWhenGPGDisabled(t *testing.T) {
-	if IsGPGEnabled() {
-		t.Skip("Run with ARGOCD_GPG_ENABLED=false to test pass when GPG is disabled")
-	}
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "https://charts.example.com/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"A"}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "https://charts.example.com/repo", []byte("chart"), nil, "chart.tgz")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsValid(), "when GPG disabled, verification is skipped and result passes")
-	require.NoError(t, result.AsError())
-}
-
-func TestVerifyHelmPassProvenanceValid(t *testing.T) {
-	t.Setenv("ARGOCD_GPG_ENABLED", "true")
-	provContent, err := os.ReadFile("testdata/demo-chart-1.0.0.tgz.prov")
-	require.NoError(t, err)
-	chartContent, err := os.ReadFile("testdata/demo-chart-1.0.0.tgz")
-	require.NoError(t, err)
-	old := helmProvenanceVerifier
-	helmProvenanceVerifier = func([]byte) (string, error) { return "C569733D3D05285D", nil }
-	t.Cleanup(func() { helmProvenanceVerifier = old })
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "http://localhost:*/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"C569733D3D05285D"}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "http://localhost:8000/charts", chartContent, provContent, "demo-chart-1.0.0.tgz")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.True(t, result.IsValid(), "valid signed provenance with allowed key should pass")
-	require.NoError(t, result.AsError())
-}
-
-func TestVerifyHelmFailUnallowedKey(t *testing.T) {
-	t.Setenv("ARGOCD_GPG_ENABLED", "true")
-	provContent, err := os.ReadFile("testdata/demo-chart-1.0.0.tgz.prov")
-	require.NoError(t, err)
-	chartContent, err := os.ReadFile("testdata/demo-chart-1.0.0.tgz")
-	require.NoError(t, err)
-	old := helmProvenanceVerifier
-	helmProvenanceVerifier = func([]byte) (string, error) { return "C569733D3D05285D", nil }
-	t.Cleanup(func() { helmProvenanceVerifier = old })
-	si := &v1alpha1.SourceIntegrity{
-		Helm: &v1alpha1.SourceIntegrityHelm{
-			Policies: []*v1alpha1.SourceIntegrityHelmPolicy{{
-				Repos:      []v1alpha1.SourceIntegrityHelmPolicyRepo{{URL: "http://localhost:*/*"}},
-				Provenance: &v1alpha1.SourceIntegrityHelmPolicyProvenance{Mode: v1alpha1.SourceIntegrityHelmPolicyProvenanceModeProvenance, Keys: []string{"0000000000000000"}},
-			}},
-		},
-	}
-	result, err := VerifyHelm(si, "http://localhost:8000/charts", chartContent, provContent, "demo-chart-1.0.0.tgz")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.IsValid())
-	require.Error(t, result.AsError())
-	assert.Contains(t, result.AsError().Error(), "signed with unallowed key")
 }

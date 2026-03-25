@@ -5,44 +5,9 @@ import (
 	"fmt"
 )
 
-// +kubebuilder:validation:XValidation:rule="self.git != null || self.helm != null",message="sourceIntegrity must specify at least one of git or helm"
 type SourceIntegrity struct {
 	// Git - policies for git source verification
-	Git *SourceIntegrityGit `json:"git,omitempty" protobuf:"bytes,1,name=git"`
-	// Helm - policies for Helm chart provenance verification (traditional repo only; OCI out of scope here)
-	Helm *SourceIntegrityHelm `json:"helm,omitempty" protobuf:"bytes,2,name=helm"`
-}
-
-// SourceIntegrityHelm holds policies for Helm chart provenance verification.
-type SourceIntegrityHelm struct {
-	Policies []*SourceIntegrityHelmPolicy `json:"policies" protobuf:"bytes,1,name=policies"`
-}
-
-// SourceIntegrityHelmPolicy applies to Helm repos matching Repos; provenance verifies .prov signature and allowed keys.
-type SourceIntegrityHelmPolicy struct {
-	Repos      []SourceIntegrityHelmPolicyRepo      `json:"repos" protobuf:"bytes,1,name=repos"`
-	Provenance *SourceIntegrityHelmPolicyProvenance `json:"provenance" protobuf:"bytes,2,name=provenance"`
-}
-
-// SourceIntegrityHelmPolicyRepo restricts which Helm repo URLs the policy applies to (glob).
-type SourceIntegrityHelmPolicyRepo struct {
-	URL string `json:"url" protobuf:"bytes,1,name=url"`
-}
-
-// SourceIntegrityHelmPolicyProvenanceMode controls provenance verification.
-type SourceIntegrityHelmPolicyProvenanceMode string
-
-const (
-	// SourceIntegrityHelmPolicyProvenanceModeNone skips verification (e.g. for exceptions).
-	SourceIntegrityHelmPolicyProvenanceModeNone SourceIntegrityHelmPolicyProvenanceMode = "none"
-	// SourceIntegrityHelmPolicyProvenanceModeProvenance requires a .prov file, valid signature, and chart checksum match.
-	SourceIntegrityHelmPolicyProvenanceModeProvenance SourceIntegrityHelmPolicyProvenanceMode = "provenance"
-)
-
-// SourceIntegrityHelmPolicyProvenance configures verification of Helm chart provenance (.prov file and signature).
-type SourceIntegrityHelmPolicyProvenance struct {
-	Mode SourceIntegrityHelmPolicyProvenanceMode `json:"mode" protobuf:"bytes,1,name=mode"`
-	Keys []string                                `json:"keys" protobuf:"bytes,2,name=keys"` // Allowed signer key IDs
+	Git *SourceIntegrityGit `json:"git" protobuf:"bytes,1,name=git"` // A mandatory field until there are alternatives
 }
 
 type SourceIntegrityGit struct {
@@ -64,13 +29,12 @@ type SourceIntegrityGitPolicyRepo struct {
 type SourceIntegrityGitPolicyGPGMode string
 
 var (
-	// SourceIntegrityGitPolicyGPGModeNone performs no verification at all. This is useful to declare exceptions in more
-	// general policies declared later (i.e.: verify in repositories in an organization, except for one).
+	// SourceIntegrityGitPolicyGPGModeNone performs no verification at all. This is useful for troubleshooting.
 	SourceIntegrityGitPolicyGPGModeNone SourceIntegrityGitPolicyGPGMode = "none"
-	// SourceIntegrityGitPolicyGPGModeHead verifies the current target revision, an annotated tag or a commit.
+	// SourceIntegrityGitPolicyGPGModeHead verifies the current target revision, an annotated tag, or a commit.
 	SourceIntegrityGitPolicyGPGModeHead SourceIntegrityGitPolicyGPGMode = "head"
-	// SourceIntegrityGitPolicyGPGModeStrict verifies all ancestry of target revision all the way to git init or a seal commits.
-	// If pointing to an annotated tag, it verified both the tag signature and the commit one.
+	// SourceIntegrityGitPolicyGPGModeStrict verifies all ancestry of target revision all the way to git init or seal commits.
+	// If pointing to an annotated tag, it verifies both the tag signature and the commit history.
 	SourceIntegrityGitPolicyGPGModeStrict SourceIntegrityGitPolicyGPGMode = "strict"
 )
 
@@ -100,7 +64,7 @@ type SourceIntegrityCheckResult struct {
 type SourceIntegrityCheckResultItem struct {
 	// Name of the check that is human-understandable pointing out to the kind of verification performed.
 	Name string `protobuf:"bytes,1,name=name"`
-	// Problems is a list of messages explaining why the check failed. Empty list means success.
+	// Problems is a list of messages explaining why the check failed. Empty list means the check has succeeded.
 	Problems []string `protobuf:"bytes,2,name=problems"`
 }
 
@@ -141,13 +105,15 @@ func (r *SourceIntegrityCheckResult) IsValid() bool {
 	return true
 }
 
+// InjectSourceName updates the names of the checks with a new prefix. This is to distinguish results reported when
+// checking multiple sources.
 func (r *SourceIntegrityCheckResult) InjectSourceName(sourceName string) {
 	if r == nil {
 		return
 	}
 	for chi, check := range r.Checks {
 		for pi, problem := range check.Problems {
-			r.Checks[chi].Problems[pi] = sourceName + problem
+			r.Checks[chi].Problems[pi] = fmt.Sprintf("%s: %s", sourceName, problem)
 		}
 	}
 }

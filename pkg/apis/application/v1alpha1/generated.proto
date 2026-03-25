@@ -113,6 +113,7 @@ message AppProjectSpec {
   repeated ApplicationDestinationServiceAccount destinationServiceAccounts = 14;
 
   // SourceIntegrity represents a constraint on manifest sources integrity to be met before they can be used.
+  // Do not access directly, use EffectiveSourceIntegrity() for correct backwards compatibility handling.
   optional SourceIntegrity sourceIntegrity = 15;
 }
 
@@ -462,6 +463,21 @@ message ApplicationSetTree {
   repeated ResourceNode nodes = 1;
 }
 
+// ApplicationSetWatchEvent contains information about application change.
+message ApplicationSetWatchEvent {
+  // Type represents the Kubernetes watch event type. The protobuf tag uses
+  // casttype to ensure the generated Go code keeps this field as
+  // watch.EventType (a strong Go type) instead of falling back to a plain string
+  optional string type = 1;
+
+  // ApplicationSet is:
+  //  * If Type is Added or Modified: the new state of the object.
+  //  * If Type is Deleted: the state of the object immediately before deletion.
+  //  * If Type is Error: *api.Status is recommended; other types may make sense
+  //    depending on context
+  optional ApplicationSet applicationSet = 2;
+}
+
 // ApplicationSource contains all required information about the source of an application
 message ApplicationSource {
   // RepoURL is the URL to the repository (Git or Helm) that contains the application manifests
@@ -578,10 +594,10 @@ message ApplicationSourceJsonnet {
 
 // ApplicationSourceKustomize holds options specific to an Application source specific to Kustomize
 message ApplicationSourceKustomize {
-  // NamePrefix is a prefix appended to resources for Kustomize apps
+  // NamePrefix overrides the namePrefix in the kustomization.yaml for Kustomize apps
   optional string namePrefix = 1;
 
-  // NameSuffix is a suffix appended to resources for Kustomize apps
+  // NameSuffix overrides the nameSuffix in the kustomization.yaml for Kustomize apps
   optional string nameSuffix = 2;
 
   // Images is a list of Kustomize image override specifications
@@ -2320,10 +2336,15 @@ message RevisionMetadata {
   // Message contains the message associated with the revision, most likely the commit message.
   optional string message = 4;
 
-  optional SourceIntegrityCheckResult sourceIntegrityResult = 5;
+  // SignatureInfo contains a hint on the signer if the revision was signed with GPG, and signature verification is enabled.
+  //
+  // Deprecated: Use SourceIntegrityResult for more detailed information. SignatureInfo will be removed with the next major version.
+  optional string signatureInfo = 5;
 
   // References contains references to information that's related to this commit in some way.
   repeated RevisionReference references = 6;
+
+  optional SourceIntegrityCheckResult sourceIntegrityResult = 7;
 }
 
 // RevisionReference contains a reference to a some information that is related in some way to another commit. For now,
@@ -2562,13 +2583,9 @@ message SourceHydratorStatus {
   optional HydrateOperation currentOperation = 2;
 }
 
-// +kubebuilder:validation:XValidation:rule="self.git != null || self.helm != null",message="sourceIntegrity must specify at least one of git or helm"
 message SourceIntegrity {
   // Git - policies for git source verification
   optional SourceIntegrityGit git = 1;
-
-  // Helm - policies for Helm chart provenance verification (traditional repo only; OCI out of scope here)
-  optional SourceIntegrityHelm helm = 2;
 }
 
 // SourceIntegrityCheckResult represents a conclusion of the SourceIntegrity evaluation.
@@ -2583,7 +2600,7 @@ message SourceIntegrityCheckResultItem {
   // Name of the check that is human-understandable pointing out to the kind of verification performed.
   optional string name = 1;
 
-  // Problems is a list of messages explaining why the check failed. Empty list means success.
+  // Problems is a list of messages explaining why the check failed. Empty list means the check has succeeded.
   repeated string problems = 2;
 }
 
@@ -2617,30 +2634,6 @@ message SourceIntegrityGitPolicyGPG {
 
 message SourceIntegrityGitPolicyRepo {
   // URL specifier, glob.
-  optional string url = 1;
-}
-
-// SourceIntegrityHelm holds policies for Helm chart provenance verification.
-message SourceIntegrityHelm {
-  repeated SourceIntegrityHelmPolicy policies = 1;
-}
-
-// SourceIntegrityHelmPolicy applies to Helm repos matching Repos; provenance verifies .prov signature and allowed keys.
-message SourceIntegrityHelmPolicy {
-  repeated SourceIntegrityHelmPolicyRepo repos = 1;
-
-  optional SourceIntegrityHelmPolicyProvenance provenance = 2;
-}
-
-// SourceIntegrityHelmPolicyProvenance configures verification of Helm chart provenance (.prov file and signature).
-message SourceIntegrityHelmPolicyProvenance {
-  optional string mode = 1;
-
-  repeated string keys = 2;
-}
-
-// SourceIntegrityHelmPolicyRepo restricts which Helm repo URLs the policy applies to (glob).
-message SourceIntegrityHelmPolicyRepo {
   optional string url = 1;
 }
 

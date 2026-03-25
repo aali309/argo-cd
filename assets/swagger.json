@@ -4385,6 +4385,69 @@
         }
       }
     },
+    "/api/v1/stream/applicationsets": {
+      "get": {
+        "tags": [
+          "ApplicationSetService"
+        ],
+        "operationId": "ApplicationSetService_Watch",
+        "parameters": [
+          {
+            "type": "string",
+            "name": "name",
+            "in": "query"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi",
+            "name": "projects",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "name": "selector",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "name": "appSetNamespace",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "when specified with a watch call, shows changes that occur after that particular version of a resource.",
+            "name": "resourceVersion",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A successful response.(streaming responses)",
+            "schema": {
+              "type": "object",
+              "title": "Stream result of v1alpha1ApplicationSetWatchEvent",
+              "properties": {
+                "error": {
+                  "$ref": "#/definitions/runtimeStreamError"
+                },
+                "result": {
+                  "$ref": "#/definitions/v1alpha1ApplicationSetWatchEvent"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/runtimeError"
+            }
+          }
+        }
+      }
+    },
     "/api/v1/write-repocreds": {
       "get": {
         "tags": [
@@ -6046,6 +6109,10 @@
         },
         "sourceType": {
           "type": "string"
+        },
+        "verifyResult": {
+          "description": "Raw response of git verify-commit operation (always the empty string for Helm)\nDeprecated: Use SourceIntegrityResult for more detailed information. VerifyResult will be removed with the next major version.",
+          "type": "string"
         }
       }
     },
@@ -7461,6 +7528,19 @@
         }
       }
     },
+    "v1alpha1ApplicationSetWatchEvent": {
+      "description": "ApplicationSetWatchEvent contains information about application change.",
+      "type": "object",
+      "properties": {
+        "applicationSet": {
+          "$ref": "#/definitions/v1alpha1ApplicationSet"
+        },
+        "type": {
+          "type": "string",
+          "title": "Type represents the Kubernetes watch event type. The protobuf tag uses\ncasttype to ensure the generated Go code keeps this field as\nwatch.EventType (a strong Go type) instead of falling back to a plain string"
+        }
+      }
+    },
     "v1alpha1ApplicationSource": {
       "type": "object",
       "title": "ApplicationSource contains all required information about the source of an application",
@@ -7697,11 +7777,11 @@
         },
         "namePrefix": {
           "type": "string",
-          "title": "NamePrefix is a prefix appended to resources for Kustomize apps"
+          "title": "NamePrefix overrides the namePrefix in the kustomization.yaml for Kustomize apps"
         },
         "nameSuffix": {
           "type": "string",
-          "title": "NameSuffix is a suffix appended to resources for Kustomize apps"
+          "title": "NameSuffix overrides the nameSuffix in the kustomization.yaml for Kustomize apps"
         },
         "namespace": {
           "type": "string",
@@ -10119,6 +10199,10 @@
             "$ref": "#/definitions/v1alpha1RevisionReference"
           }
         },
+        "signatureInfo": {
+          "description": "SignatureInfo contains a hint on the signer if the revision was signed with GPG, and signature verification is enabled.\n\nDeprecated: Use SourceIntegrityResult for more detailed information. SignatureInfo will be removed with the next major version.",
+          "type": "string"
+        },
         "sourceIntegrityResult": {
           "$ref": "#/definitions/v1alpha1SourceIntegrityCheckResult"
         },
@@ -10468,13 +10552,9 @@
     },
     "v1alpha1SourceIntegrity": {
       "type": "object",
-      "title": "+kubebuilder:validation:XValidation:rule=\"self.git != null || self.helm != null\",message=\"sourceIntegrity must specify at least one of git or helm\"",
       "properties": {
         "git": {
           "$ref": "#/definitions/v1alpha1SourceIntegrityGit"
-        },
-        "helm": {
-          "$ref": "#/definitions/v1alpha1SourceIntegrityHelm"
         }
       }
     },
@@ -10499,7 +10579,7 @@
           "type": "string"
         },
         "problems": {
-          "description": "Problems is a list of messages explaining why the check failed. Empty list means success.",
+          "description": "Problems is a list of messages explaining why the check failed. Empty list means the check has succeeded.",
           "type": "array",
           "items": {
             "type": "string"
@@ -10554,57 +10634,6 @@
       "properties": {
         "url": {
           "description": "URL specifier, glob.",
-          "type": "string"
-        }
-      }
-    },
-    "v1alpha1SourceIntegrityHelm": {
-      "description": "SourceIntegrityHelm holds policies for Helm chart provenance verification.",
-      "type": "object",
-      "properties": {
-        "policies": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1alpha1SourceIntegrityHelmPolicy"
-          }
-        }
-      }
-    },
-    "v1alpha1SourceIntegrityHelmPolicy": {
-      "description": "SourceIntegrityHelmPolicy applies to Helm repos matching Repos; provenance verifies .prov signature and allowed keys.",
-      "type": "object",
-      "properties": {
-        "provenance": {
-          "$ref": "#/definitions/v1alpha1SourceIntegrityHelmPolicyProvenance"
-        },
-        "repos": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/v1alpha1SourceIntegrityHelmPolicyRepo"
-          }
-        }
-      }
-    },
-    "v1alpha1SourceIntegrityHelmPolicyProvenance": {
-      "description": "SourceIntegrityHelmPolicyProvenance configures verification of Helm chart provenance (.prov file and signature).",
-      "type": "object",
-      "properties": {
-        "keys": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "mode": {
-          "type": "string"
-        }
-      }
-    },
-    "v1alpha1SourceIntegrityHelmPolicyRepo": {
-      "description": "SourceIntegrityHelmPolicyRepo restricts which Helm repo URLs the policy applies to (glob).",
-      "type": "object",
-      "properties": {
-        "url": {
           "type": "string"
         }
       }

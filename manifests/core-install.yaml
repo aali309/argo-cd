@@ -411,12 +411,12 @@ spec:
                               apply common labels to resource selectors or not
                             type: boolean
                           namePrefix:
-                            description: NamePrefix is a prefix appended to resources
-                              for Kustomize apps
+                            description: NamePrefix overrides the namePrefix in the
+                              kustomization.yaml for Kustomize apps
                             type: string
                           nameSuffix:
-                            description: NameSuffix is a suffix appended to resources
-                              for Kustomize apps
+                            description: NameSuffix overrides the nameSuffix in the
+                              kustomization.yaml for Kustomize apps
                             type: string
                           namespace:
                             description: Namespace sets the namespace that Kustomize
@@ -800,12 +800,12 @@ spec:
                                 to apply common labels to resource selectors or not
                               type: boolean
                             namePrefix:
-                              description: NamePrefix is a prefix appended to resources
-                                for Kustomize apps
+                              description: NamePrefix overrides the namePrefix in
+                                the kustomization.yaml for Kustomize apps
                               type: string
                             nameSuffix:
-                              description: NameSuffix is a suffix appended to resources
-                                for Kustomize apps
+                              description: NameSuffix overrides the nameSuffix in
+                                the kustomization.yaml for Kustomize apps
                               type: string
                             namespace:
                               description: Namespace sets the namespace that Kustomize
@@ -1299,11 +1299,11 @@ spec:
                           common labels to resource selectors or not
                         type: boolean
                       namePrefix:
-                        description: NamePrefix is a prefix appended to resources
+                        description: NamePrefix overrides the namePrefix in the kustomization.yaml
                           for Kustomize apps
                         type: string
                       nameSuffix:
-                        description: NameSuffix is a suffix appended to resources
+                        description: NameSuffix overrides the nameSuffix in the kustomization.yaml
                           for Kustomize apps
                         type: string
                       namespace:
@@ -1676,12 +1676,12 @@ spec:
                               apply common labels to resource selectors or not
                             type: boolean
                           namePrefix:
-                            description: NamePrefix is a prefix appended to resources
-                              for Kustomize apps
+                            description: NamePrefix overrides the namePrefix in the
+                              kustomization.yaml for Kustomize apps
                             type: string
                           nameSuffix:
-                            description: NameSuffix is a suffix appended to resources
-                              for Kustomize apps
+                            description: NameSuffix overrides the nameSuffix in the
+                              kustomization.yaml for Kustomize apps
                             type: string
                           namespace:
                             description: Namespace sets the namespace that Kustomize
@@ -2087,12 +2087,12 @@ spec:
                             common labels to resource selectors or not
                           type: boolean
                         namePrefix:
-                          description: NamePrefix is a prefix appended to resources
-                            for Kustomize apps
+                          description: NamePrefix overrides the namePrefix in the
+                            kustomization.yaml for Kustomize apps
                           type: string
                         nameSuffix:
-                          description: NameSuffix is a suffix appended to resources
-                            for Kustomize apps
+                          description: NameSuffix overrides the nameSuffix in the
+                            kustomization.yaml for Kustomize apps
                           type: string
                         namespace:
                           description: Namespace sets the namespace that Kustomize
@@ -2646,12 +2646,12 @@ spec:
                                 to apply common labels to resource selectors or not
                               type: boolean
                             namePrefix:
-                              description: NamePrefix is a prefix appended to resources
-                                for Kustomize apps
+                              description: NamePrefix overrides the namePrefix in
+                                the kustomization.yaml for Kustomize apps
                               type: string
                             nameSuffix:
-                              description: NameSuffix is a suffix appended to resources
-                                for Kustomize apps
+                              description: NameSuffix overrides the nameSuffix in
+                                the kustomization.yaml for Kustomize apps
                               type: string
                             namespace:
                               description: Namespace sets the namespace that Kustomize
@@ -3039,12 +3039,12 @@ spec:
                                   not
                                 type: boolean
                               namePrefix:
-                                description: NamePrefix is a prefix appended to resources
-                                  for Kustomize apps
+                                description: NamePrefix overrides the namePrefix in
+                                  the kustomization.yaml for Kustomize apps
                                 type: string
                               nameSuffix:
-                                description: NameSuffix is a suffix appended to resources
-                                  for Kustomize apps
+                                description: NameSuffix overrides the nameSuffix in
+                                  the kustomization.yaml for Kustomize apps
                                 type: string
                               namespace:
                                 description: Namespace sets the namespace that Kustomize
@@ -3588,12 +3588,12 @@ spec:
                                       or not
                                     type: boolean
                                   namePrefix:
-                                    description: NamePrefix is a prefix appended to
-                                      resources for Kustomize apps
+                                    description: NamePrefix overrides the namePrefix
+                                      in the kustomization.yaml for Kustomize apps
                                     type: string
                                   nameSuffix:
-                                    description: NameSuffix is a suffix appended to
-                                      resources for Kustomize apps
+                                    description: NameSuffix overrides the nameSuffix
+                                      in the kustomization.yaml for Kustomize apps
                                     type: string
                                   namespace:
                                     description: Namespace sets the namespace that
@@ -4001,12 +4001,12 @@ spec:
                                         selectors or not
                                       type: boolean
                                     namePrefix:
-                                      description: NamePrefix is a prefix appended
-                                        to resources for Kustomize apps
+                                      description: NamePrefix overrides the namePrefix
+                                        in the kustomization.yaml for Kustomize apps
                                       type: string
                                     nameSuffix:
-                                      description: NameSuffix is a suffix appended
-                                        to resources for Kustomize apps
+                                      description: NameSuffix overrides the nameSuffix
+                                        in the kustomization.yaml for Kustomize apps
                                       type: string
                                     namespace:
                                       description: Namespace sets the namespace that
@@ -4531,12 +4531,12 @@ spec:
                                   not
                                 type: boolean
                               namePrefix:
-                                description: NamePrefix is a prefix appended to resources
-                                  for Kustomize apps
+                                description: NamePrefix overrides the namePrefix in
+                                  the kustomization.yaml for Kustomize apps
                                 type: string
                               nameSuffix:
-                                description: NameSuffix is a suffix appended to resources
-                                  for Kustomize apps
+                                description: NameSuffix overrides the nameSuffix in
+                                  the kustomization.yaml for Kustomize apps
                                 type: string
                               namespace:
                                 description: Namespace sets the namespace that Kustomize
@@ -4935,12 +4935,12 @@ spec:
                                     not
                                   type: boolean
                                 namePrefix:
-                                  description: NamePrefix is a prefix appended to
-                                    resources for Kustomize apps
+                                  description: NamePrefix overrides the namePrefix
+                                    in the kustomization.yaml for Kustomize apps
                                   type: string
                                 nameSuffix:
-                                  description: NameSuffix is a suffix appended to
-                                    resources for Kustomize apps
+                                  description: NameSuffix overrides the nameSuffix
+                                    in the kustomization.yaml for Kustomize apps
                                   type: string
                                 namespace:
                                   description: Namespace sets the namespace that Kustomize
@@ -5460,12 +5460,12 @@ spec:
                                       or not
                                     type: boolean
                                   namePrefix:
-                                    description: NamePrefix is a prefix appended to
-                                      resources for Kustomize apps
+                                    description: NamePrefix overrides the namePrefix
+                                      in the kustomization.yaml for Kustomize apps
                                     type: string
                                   nameSuffix:
-                                    description: NameSuffix is a suffix appended to
-                                      resources for Kustomize apps
+                                    description: NameSuffix overrides the nameSuffix
+                                      in the kustomization.yaml for Kustomize apps
                                     type: string
                                   namespace:
                                     description: Namespace sets the namespace that
@@ -5913,12 +5913,12 @@ spec:
                                       or not
                                     type: boolean
                                   namePrefix:
-                                    description: NamePrefix is a prefix appended to
-                                      resources for Kustomize apps
+                                    description: NamePrefix overrides the namePrefix
+                                      in the kustomization.yaml for Kustomize apps
                                     type: string
                                   nameSuffix:
-                                    description: NameSuffix is a suffix appended to
-                                      resources for Kustomize apps
+                                    description: NameSuffix overrides the nameSuffix
+                                      in the kustomization.yaml for Kustomize apps
                                     type: string
                                   namespace:
                                     description: Namespace sets the namespace that
@@ -6426,12 +6426,12 @@ spec:
                                   not
                                 type: boolean
                               namePrefix:
-                                description: NamePrefix is a prefix appended to resources
-                                  for Kustomize apps
+                                description: NamePrefix overrides the namePrefix in
+                                  the kustomization.yaml for Kustomize apps
                                 type: string
                               nameSuffix:
-                                description: NameSuffix is a suffix appended to resources
-                                  for Kustomize apps
+                                description: NameSuffix overrides the nameSuffix in
+                                  the kustomization.yaml for Kustomize apps
                                 type: string
                               namespace:
                                 description: Namespace sets the namespace that Kustomize
@@ -6830,12 +6830,12 @@ spec:
                                     not
                                   type: boolean
                                 namePrefix:
-                                  description: NamePrefix is a prefix appended to
-                                    resources for Kustomize apps
+                                  description: NamePrefix overrides the namePrefix
+                                    in the kustomization.yaml for Kustomize apps
                                   type: string
                                 nameSuffix:
-                                  description: NameSuffix is a suffix appended to
-                                    resources for Kustomize apps
+                                  description: NameSuffix overrides the nameSuffix
+                                    in the kustomization.yaml for Kustomize apps
                                   type: string
                                 namespace:
                                   description: Namespace sets the namespace that Kustomize
@@ -30450,8 +30450,9 @@ spec:
                   type: object
                 type: array
               sourceIntegrity:
-                description: SourceIntegrity represents a constraint on manifest sources
-                  integrity to be met before they can be used.
+                description: |-
+                  SourceIntegrity represents a constraint on manifest sources integrity to be met before they can be used.
+                  Do not access directly, use EffectiveSourceIntegrity() for correct backwards compatibility handling.
                 properties:
                   git:
                     description: Git - policies for git source verification
@@ -30494,56 +30495,9 @@ spec:
                     required:
                     - policies
                     type: object
-                  helm:
-                    description: Helm - policies for Helm chart provenance verification
-                      (traditional repo only; OCI out of scope here)
-                    properties:
-                      policies:
-                        items:
-                          description: SourceIntegrityHelmPolicy applies to Helm repos
-                            matching Repos; provenance verifies .prov signature and
-                            allowed keys.
-                          properties:
-                            provenance:
-                              description: SourceIntegrityHelmPolicyProvenance configures
-                                verification of Helm chart provenance (.prov file
-                                and signature).
-                              properties:
-                                keys:
-                                  items:
-                                    type: string
-                                  type: array
-                                mode:
-                                  description: SourceIntegrityHelmPolicyProvenanceMode
-                                    controls provenance verification.
-                                  type: string
-                              required:
-                              - keys
-                              - mode
-                              type: object
-                            repos:
-                              items:
-                                description: SourceIntegrityHelmPolicyRepo restricts
-                                  which Helm repo URLs the policy applies to (glob).
-                                properties:
-                                  url:
-                                    type: string
-                                required:
-                                - url
-                                type: object
-                              type: array
-                          required:
-                          - provenance
-                          - repos
-                          type: object
-                        type: array
-                    required:
-                    - policies
-                    type: object
+                required:
+                - git
                 type: object
-                x-kubernetes-validations:
-                - message: sourceIntegrity must specify at least one of git or helm
-                  rule: self.git != null || self.helm != null
               sourceNamespaces:
                 description: SourceNamespaces defines the namespaces application resources
                   are allowed to be created in
@@ -31881,8 +31835,8 @@ spec:
           name: plugins
       initContainers:
       - args:
-        - /bin/cp --update=none /usr/local/bin/argocd /var/run/argocd/argocd && /bin/ln
-          -s /var/run/argocd/argocd /var/run/argocd/argocd-cmp-server
+        - /bin/cp /usr/local/bin/argocd /var/run/argocd/argocd && /bin/ln -sf /var/run/argocd/argocd
+          /var/run/argocd/argocd-cmp-server
         command:
         - sh
         - -c

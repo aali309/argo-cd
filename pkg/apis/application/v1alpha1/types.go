@@ -685,9 +685,9 @@ func (images KustomizeImages) Find(image KustomizeImage) int {
 
 // ApplicationSourceKustomize holds options specific to an Application source specific to Kustomize
 type ApplicationSourceKustomize struct {
-	// NamePrefix is a prefix appended to resources for Kustomize apps
+	// NamePrefix overrides the namePrefix in the kustomization.yaml for Kustomize apps
 	NamePrefix string `json:"namePrefix,omitempty" protobuf:"bytes,1,opt,name=namePrefix"`
-	// NameSuffix is a suffix appended to resources for Kustomize apps
+	// NameSuffix overrides the nameSuffix in the kustomization.yaml for Kustomize apps
 	NameSuffix string `json:"nameSuffix,omitempty" protobuf:"bytes,2,opt,name=nameSuffix"`
 	// Images is a list of Kustomize image override specifications
 	Images KustomizeImages `json:"images,omitempty" protobuf:"bytes,3,opt,name=images"`
@@ -1461,6 +1461,18 @@ func (o SyncOptions) HasOption(option string) bool {
 	return slices.Contains(o, option)
 }
 
+// GetOptionValue returns true if the list of sync options contains given option
+// This function only support options that are defined as key=value and not standalone.
+func (o SyncOptions) GetOptionValue(optionKey string) *string {
+	prefix := optionKey + "="
+	for _, i := range o {
+		if val, found := strings.CutPrefix(i, prefix); found {
+			return new(val)
+		}
+	}
+	return nil
+}
+
 type ManagedNamespaceMetadata struct {
 	Labels      map[string]string `json:"labels,omitempty" protobuf:"bytes,1,opt,name=labels"`
 	Annotations map[string]string `json:"annotations,omitempty" protobuf:"bytes,2,opt,name=annotations"`
@@ -1559,13 +1571,37 @@ type Backoff struct {
 // SyncPolicyAutomated controls the behavior of an automated sync
 type SyncPolicyAutomated struct {
 	// Prune specifies whether to delete resources from the cluster that are not found in the sources anymore as part of automated sync (default: false)
-	Prune bool `json:"prune,omitempty" protobuf:"bytes,1,opt,name=prune"`
+	Prune *bool `json:"prune,omitempty" protobuf:"bytes,1,opt,name=prune"`
 	// SelfHeal specifies whether to revert resources back to their desired state upon modification in the cluster (default: false)
-	SelfHeal bool `json:"selfHeal,omitempty" protobuf:"bytes,2,opt,name=selfHeal"`
+	SelfHeal *bool `json:"selfHeal,omitempty" protobuf:"bytes,2,opt,name=selfHeal"`
 	// AllowEmpty allows apps have zero live resources (default: false)
-	AllowEmpty bool `json:"allowEmpty,omitempty" protobuf:"bytes,3,opt,name=allowEmpty"`
+	AllowEmpty *bool `json:"allowEmpty,omitempty" protobuf:"bytes,3,opt,name=allowEmpty"`
 	// Enable allows apps to explicitly control automated sync
 	Enabled *bool `json:"enabled,omitempty" protobuf:"bytes,4,opt,name=enabled"`
+}
+
+// GetPrune returns the value of Prune, defaulting to false if nil.
+func (a *SyncPolicyAutomated) GetPrune() bool {
+	if a == nil || a.Prune == nil {
+		return false
+	}
+	return *a.Prune
+}
+
+// GetSelfHeal returns the value of SelfHeal, defaulting to false if nil.
+func (a *SyncPolicyAutomated) GetSelfHeal() bool {
+	if a == nil || a.SelfHeal == nil {
+		return false
+	}
+	return *a.SelfHeal
+}
+
+// GetAllowEmpty returns the value of AllowEmpty, defaulting to false if nil.
+func (a *SyncPolicyAutomated) GetAllowEmpty() bool {
+	if a == nil || a.AllowEmpty == nil {
+		return false
+	}
+	return *a.AllowEmpty
 }
 
 // SyncStrategy controls the manner in which a sync is performed
@@ -1651,10 +1687,14 @@ type RevisionMetadata struct {
 	// Floating tags can move from one revision to another
 	Tags []string `json:"tags,omitempty" protobuf:"bytes,3,opt,name=tags"`
 	// Message contains the message associated with the revision, most likely the commit message.
-	Message               string                      `json:"message,omitempty" protobuf:"bytes,4,opt,name=message"`
-	SourceIntegrityResult *SourceIntegrityCheckResult `json:"sourceIntegrityResult,omitempty" protobuf:"bytes,5,opt,name=sourceIntegrityResult"`
+	Message string `json:"message,omitempty" protobuf:"bytes,4,opt,name=message"`
+	// SignatureInfo contains a hint on the signer if the revision was signed with GPG, and signature verification is enabled.
+	//
+	// Deprecated: Use SourceIntegrityResult for more detailed information. SignatureInfo will be removed with the next major version.
+	SignatureInfo string `json:"signatureInfo,omitempty" protobuf:"bytes,5,opt,name=signatureInfo"`
 	// References contains references to information that's related to this commit in some way.
-	References []RevisionReference `json:"references,omitempty" protobuf:"bytes,6,opt,name=references"`
+	References            []RevisionReference         `json:"references,omitempty" protobuf:"bytes,6,opt,name=references"`
+	SourceIntegrityResult *SourceIntegrityCheckResult `json:"sourceIntegrityResult,omitempty" protobuf:"bytes,7,opt,name=sourceIntegrityResult"`
 }
 
 // OCIMetadata contains metadata for a specific revision in an OCI repository
@@ -2272,7 +2312,7 @@ type Cluster struct {
 	// The embedded metav1.ObjectMeta field is purely here to please the informer when converting from a v1.Secret to a Cluster.
 	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
 	// +optional
-	metav1.ObjectMeta `json:"-,omitempty"`
+	metav1.ObjectMeta `json:"-"`
 }
 
 func (c *Cluster) Sanitized() *Cluster {
@@ -2761,11 +2801,13 @@ type AppProjectSpec struct {
 	// DestinationServiceAccounts holds information about the service accounts to be impersonated for the application sync operation for each destination.
 	DestinationServiceAccounts []ApplicationDestinationServiceAccount `json:"destinationServiceAccounts,omitempty" protobuf:"bytes,14,name=destinationServiceAccounts"`
 	// SourceIntegrity represents a constraint on manifest sources integrity to be met before they can be used.
-	SourceIntegrity *SourceIntegrity `json:"sourceIntegrity,omitempty" protobuf:"bytes,15,name=sourceIntegrity"` // Do not access directly, use SourceIntegrity()
+	// Do not access directly, use EffectiveSourceIntegrity() for correct backwards compatibility handling.
+	SourceIntegrity *SourceIntegrity `json:"sourceIntegrity,omitempty" protobuf:"bytes,15,name=sourceIntegrity"`
 }
 
 // EffectiveSourceIntegrity incorporates the legacy SignatureKeys into SourceIntegrity, if possible
-// SignatureKeys are added as a Git GPG policy for repos specified with `*`. If such a policy exists, the SignatureKeys are ignored.
+// SignatureKeys are added as a Git GPG policy for repos specified with `*`. If such a policy exists, the SignatureKeys
+// are ignored with warning.
 func (proj *AppProject) EffectiveSourceIntegrity() *SourceIntegrity {
 	var legacyKeys []string
 	for _, k := range proj.Spec.SignatureKeys {
@@ -2773,7 +2815,7 @@ func (proj *AppProject) EffectiveSourceIntegrity() *SourceIntegrity {
 	}
 
 	if len(legacyKeys) == 0 {
-		// The modern version or nil
+		// Already using the modern version
 		return proj.Spec.SourceIntegrity
 	}
 
@@ -2787,21 +2829,21 @@ func (proj *AppProject) EffectiveSourceIntegrity() *SourceIntegrity {
 		}},
 	}
 
-	if proj.Spec.SourceIntegrity != nil {
-		if proj.Spec.SourceIntegrity.Git != nil {
-			log.Warnf("Both SourceIntegrity and SignatureKeys specified in %s AppProject. Ignoring SignatureKeys. Migrate them to SourceIntegrity.", proj.Name)
-			return proj.Spec.SourceIntegrity
-		}
-
-		// Preserve non-git checks without modifying project - use deep-copy and amend
-		log.Warnf("Merging SourceIntegrity with legacy SignatureKeys specified in %s AppProject. Migrate them to SourceIntegrity.", proj.Name)
-		deepCopy := proj.Spec.SourceIntegrity.DeepCopy()
-		deepCopy.Git = migratedGit
-		return deepCopy
+	if proj.Spec.SourceIntegrity == nil {
+		log.Warnf("Creating project SourceIntegrity from legacy SignatureKeys specified in %s AppProject. Migrate them to SourceIntegrity.", proj.Name)
+		return &SourceIntegrity{Git: migratedGit}
 	}
 
-	log.Warnf("Creating project SourceIntegrity from legacy SignatureKeys specified in %s AppProject. Migrate them to SourceIntegrity.", proj.Name)
-	return &SourceIntegrity{Git: migratedGit}
+	if proj.Spec.SourceIntegrity.Git != nil {
+		log.Errorf("Both SourceIntegrity and SignatureKeys specified in %s AppProject. Ignoring SignatureKeys. Migrate them to SourceIntegrity.", proj.Name)
+		return proj.Spec.SourceIntegrity
+	}
+
+	log.Warnf("Merging SourceIntegrity with legacy SignatureKeys specified in %s AppProject. Migrate them to SourceIntegrity.", proj.Name)
+	// Merge with non-git checks without modifying the AppProject - use deep-copy and amend
+	deepCopy := proj.Spec.SourceIntegrity.DeepCopy()
+	deepCopy.Git = migratedGit
+	return deepCopy
 }
 
 // ClusterResourceRestrictionItem is a cluster resource that is restricted by the project's whitelist or blacklist

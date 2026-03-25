@@ -424,4 +424,3 @@ func TestOCISourceIgnoredWithSourceIntegrity(t *testing.T) {
 		DoNotIgnoreErrors().
 		Sync("--local-repo-root", ".", "--force", "--prune")
 }
-

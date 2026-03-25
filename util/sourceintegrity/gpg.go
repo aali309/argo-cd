@@ -17,7 +17,6 @@ import (
 
 	"github.com/argoproj/argo-cd/v3/common"
 	appsv1 "github.com/argoproj/argo-cd/v3/pkg/apis/application/v1alpha1"
-	"github.com/argoproj/argo-cd/v3/util/gpg"
 	executil "github.com/argoproj/argo-cd/v3/util/exec"
 )
 
@@ -418,68 +417,6 @@ func DeletePGPKey(keyID string) error {
 	return nil
 }
 
-// VerifyCleartextSignedMessage verifies a PGP cleartext-signed message (e.g. Helm .prov file).
-// It returns the signer's key ID (long form) on success. Uses --status-fd for reliable parsing.
-// Parses the same GPG status-fd format as Git (GOODSIG, ERRSIG, BADSIG, etc.)
-func VerifyCleartextSignedMessage(clearsigned []byte) (signerKeyID string, err error) {
-	f, err := os.CreateTemp("", "gpg-verify-")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if _, err := f.Write(clearsigned); err != nil {
-		return "", err
-	}
-	if err := f.Sync(); err != nil {
-		return "", err
-	}
-
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		return "", err
-	}
-	defer pr.Close()
-	defer pw.Close()
-
-	ctx := context.Background()
-	cmd := exec.CommandContext(ctx, "gpg", "--no-permission-warning", "--verify", "--status-fd", "3", f.Name())
-	cmd.Env = getGPGEnviron()
-	cmd.ExtraFiles = []*os.File{pw}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-	pw.Close()
-	var sb strings.Builder
-	buf := make([]byte, 512)
-	for {
-		n, err := pr.Read(buf)
-		if n > 0 {
-			sb.Write(buf[:n])
-		}
-		if err != nil {
-			break
-		}
-	}
-	_ = cmd.Wait()
-
-	status := sb.String()
-	code, keyID, err := gpg.ParseStatusOutputStrict(status)
-	if err != nil {
-		if errors.Is(err, gpg.ErrNoStatusFound) {
-			return "", fmt.Errorf("gpg verify did not report GOODSIG (status-fd output: %q)", status)
-		}
-		return "", err
-	}
-	if code == "GOODSIG" {
-		return keyID, nil
-	}
-	return "", fmt.Errorf("%s", gpg.VerificationFailureMessage(code, keyID))
-}
-
 // IsSecretKey returns true if the keyID also has a private key in the keyring
 func IsSecretKey(keyID string) (bool, error) {
 	args := append([]string{}, "--no-permission-warning", "--list-secret-keys", keyID)
@@ -487,28 +424,12 @@ func IsSecretKey(keyID string) (bool, error) {
 	cmd.Env = getGPGEnviron()
 	out, err := executil.Run(cmd)
 	if err != nil {
-		if isExecNotFound(err) {
-			// Fall back to gpg when gpg-wrapper.sh is not in PATH (e.g. in unit tests)
-			cmd = exec.CommandContext(context.Background(), "gpg", args...)
-			cmd.Env = getGPGEnviron()
-			out, err = executil.Run(cmd)
-		}
-		if err != nil {
-			// gpg exits 2 when the key has no secret key; treat as "not a secret key"
-			if strings.Contains(err.Error(), "No secret key") {
-				return false, nil
-			}
-			return false, err
-		}
+		return false, err
 	}
 	if strings.HasPrefix(out, "gpg: error reading key: No secret key") {
 		return false, nil
 	}
 	return true, nil
-}
-
-func isExecNotFound(err error) bool {
-	return strings.Contains(err.Error(), "executable file not found") || strings.Contains(err.Error(), "no such file or directory")
 }
 
 // GetInstalledPGPKeys runs gpg to retrieve public keys from our keyring. If kids is non-empty, limit result to those key IDs
@@ -664,22 +585,17 @@ func SyncKeyRingFromDirectory(basePath string) ([]string, []string, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("error import PGP keys: %w", err)
 		}
-		if len(addedKey) < 1 {
-			return nil, nil, fmt.Errorf("no key imported from %s", path.Join(basePath, key))
+		if len(addedKey) != 1 {
+			return nil, nil, fmt.Errorf("invalid key found in %s", path.Join(basePath, key))
 		}
-		// A key file may contain primary+subkeys; gpg reports one line per key imported.
-		for _, k := range addedKey {
-			importedKey, err := GetInstalledPGPKeys([]string{k.KeyID})
-			if err != nil {
-				return nil, nil, fmt.Errorf("error get installed PGP keys: %w", err)
-			}
-			if len(importedKey) != 1 {
-				return nil, nil, fmt.Errorf("could not get details of imported key ID %s", k.KeyID)
-			}
-			fingerprints = append(fingerprints, importedKey[0].Fingerprint)
-			installed[k.KeyID] = importedKey[0]
+		importedKey, err := GetInstalledPGPKeys([]string{addedKey[0].KeyID})
+		if err != nil {
+			return nil, nil, fmt.Errorf("error get installed PGP keys: %w", err)
+		} else if len(importedKey) != 1 {
+			return nil, nil, fmt.Errorf("could not get details of imported key ID %s", importedKey)
 		}
 		newKeys = append(newKeys, key)
+		fingerprints = append(fingerprints, importedKey[0].Fingerprint)
 	}
 
 	// Delete all keys from the keyring that are not found in the configuration anymore.
