@@ -561,10 +561,14 @@ func (s *Service) verifyHelmSourceIntegrity(
 		return nil, nil
 	}
 	if source.IsHelmOci() {
-		// OCI Helm charts are out of scope for Helm .prov policies; future OCI/sigstore support is planned separately.
+		// OCI Helm charts are out of scope for Helm .prov policies
 		return nil, nil
 	}
-	return s.verifyTraditionalHelmProvenance(ctx, sourceIntegrity, source, helmClient, revision)
+	chartTgz, provContent, chartFilename, err := readHelmChartAndProvenance(ctx, helmClient, source.Chart, revision)
+	if err != nil {
+		return sourceintegrity.HelmProvenanceFetchFailed(sourceIntegrity, source.RepoURL, err), nil
+	}
+	return sourceintegrity.VerifyHelm(ctx, sourceIntegrity, source.RepoURL, chartTgz, provContent, chartFilename)
 }
 
 func readHelmChartAndProvenance(ctx context.Context, helmClient helm.Client, chart, revision string) (chartTgz, provContent []byte, chartFilename string, err error) {
@@ -581,20 +585,6 @@ func readHelmChartAndProvenance(ctx context.Context, helmClient helm.Client, cha
 		return nil, nil, "", err
 	}
 	return chartTgz, provContent, chartFilename, nil
-}
-
-func (s *Service) verifyTraditionalHelmProvenance(
-	ctx context.Context,
-	sourceIntegrity *v1alpha1.SourceIntegrity,
-	source *v1alpha1.ApplicationSource,
-	helmClient helm.Client,
-	revision string,
-) (*v1alpha1.SourceIntegrityCheckResult, error) {
-	chartTgz, provContent, chartFilename, err := readHelmChartAndProvenance(ctx, helmClient, source.Chart, revision)
-	if err != nil {
-		return sourceintegrity.HelmProvenanceFetchFailed(sourceIntegrity, source.RepoURL, err), nil
-	}
-	return sourceintegrity.VerifyHelm(ctx, sourceIntegrity, source.RepoURL, chartTgz, provContent, chartFilename)
 }
 
 func getRepoSanitizerRegex(rootDir string) *regexp.Regexp {
