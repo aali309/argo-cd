@@ -2796,7 +2796,7 @@ func (s *Service) GetRevisionMetadata(ctx context.Context, q *apiclient.RepoServ
 	if err == nil {
 		// The SourceIntegrity criteria could have changed since this was cached - it could have been added, removed, or changed.
 		// If present in request or the cached version, treat this as a cache miss.
-		sourceIntegrity := q.SourceIntegrity != nil || metadata.SourceIntegrityResult != nil
+		sourceIntegrity := (q.SourceIntegrity != nil && q.SourceIntegrity.Git != nil) || metadata.SourceIntegrityResult != nil
 		// TODO: Remove deprecated https://github.com/argoproj/argo-cd/issues/27695
 		signatureChecking := q.CheckSignature || metadata.SignatureInfo != "" // nolint:staticcheck
 		if !sourceIntegrity && !signatureChecking {
