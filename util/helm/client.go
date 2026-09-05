@@ -39,6 +39,9 @@ var (
 	indexLock  = sync.NewKeyLock()
 
 	ErrOCINotEnabled = errors.New("could not perform the action when oci is not enabled")
+	// ErrProvenanceNotFound means every chart mirror returned HTTP 404 for the .prov file.
+	ErrProvenanceNotFound = errors.New("helm chart provenance not found")
+	errHTTPNotFound       = errors.New("http not found")
 )
 
 // userAgentTransport wraps an http.RoundTripper to add User-Agent header to all requests
@@ -67,7 +70,8 @@ type Client interface {
 	// GetChartTgzPath returns the path to the cached chart .tgz (valid after ExtractChart). Traditional Helm only.
 	GetChartTgzPath(chart string, version string) (string, error)
 	// FetchProvenance fetches the .prov file for the chart version and returns its content and the chart filename. Traditional Helm only.
-	FetchProvenance(ctx context.Context, chart string, version string) (provContent []byte, chartFilename string, err error)
+	// When noCache is true, the Helm index is not read from cache.
+	FetchProvenance(ctx context.Context, chart string, noCache bool, version string) (provContent []byte, chartFilename string, err error)
 }
 
 type ClientOpts func(c *nativeHelmChart)
@@ -430,6 +434,9 @@ func (c *nativeHelmChart) doRepoHTTPGet(ctx context.Context, url string, maxBody
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("HTTP GET %s returned %s: %w", url, resp.Status, errHTTPNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP GET %s returned %s", url, resp.Status)
 	}
@@ -510,12 +517,12 @@ func (c *nativeHelmChart) GetChartTgzPath(chart string, version string) (string,
 	return c.getCachedChartPath(chart, version)
 }
 
-func (c *nativeHelmChart) FetchProvenance(ctx context.Context, chart string, version string) ([]byte, string, error) {
+func (c *nativeHelmChart) FetchProvenance(ctx context.Context, chart string, noCache bool, version string) ([]byte, string, error) {
 	if c.enableOci {
 		return nil, "", ErrOCINotEnabled
 	}
 	const maxIndexSizeForProvenance = 10 * 1024 * 1024 // 10MB
-	index, err := c.GetIndex(ctx, false, maxIndexSizeForProvenance)
+	index, err := c.GetIndex(ctx, noCache, maxIndexSizeForProvenance)
 	if err != nil {
 		return nil, "", fmt.Errorf("error getting index for provenance: %w", err)
 	}
@@ -523,13 +530,21 @@ func (c *nativeHelmChart) FetchProvenance(ctx context.Context, chart string, ver
 	if err != nil {
 		return nil, "", err
 	}
+	allNotFound := true
 	var lastErr error
 	for _, chartURL := range chartURLs {
 		provContent, err := c.fetchProvenanceFromChartURL(ctx, chartURL)
 		if err == nil {
 			return provContent, path.Base(chartURL), nil
 		}
+		if !errors.Is(err, errHTTPNotFound) {
+			allNotFound = false
+		}
 		lastErr = err
+	}
+	if allNotFound && len(chartURLs) > 0 {
+		// Every mirror answered 404: the .prov definitively does not exist for this chart version.
+		return nil, "", fmt.Errorf("%w: failed to fetch provenance for chart %q version %q from %d URL(s): %w", ErrProvenanceNotFound, chart, version, len(chartURLs), lastErr)
 	}
 	return nil, "", fmt.Errorf("failed to fetch provenance for chart %q version %q from %d URL(s): %w", chart, version, len(chartURLs), lastErr)
 }

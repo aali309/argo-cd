@@ -477,7 +477,7 @@ func (s *Service) runRepoOperation(
 			}
 		}
 		return operation(chartPath, revision, revision, func() (*operationContext, error) {
-			sourceIntegrityResult, err := s.verifyHelmSourceIntegrity(ctx, sourceIntegrity, source, helmClient, revision)
+			sourceIntegrityResult, err := s.verifyHelmSourceIntegrity(ctx, sourceIntegrity, source, helmClient, revision, settings.noCache || settings.noRevisionCache)
 			if err != nil {
 				return nil, err
 			}
@@ -570,6 +570,7 @@ func (s *Service) verifyHelmSourceIntegrity(
 	source *v1alpha1.ApplicationSource,
 	helmClient helm.Client,
 	revision string,
+	noCache bool,
 ) (*v1alpha1.SourceIntegrityCheckResult, error) {
 	if !sourceintegrity.HasCriteria(sourceIntegrity, *source) {
 		return nil, nil
@@ -578,10 +579,10 @@ func (s *Service) verifyHelmSourceIntegrity(
 		// OCI Helm charts are out of scope for Helm .prov policies; future OCI/sigstore support is planned separately.
 		return nil, nil
 	}
-	return s.verifyTraditionalHelmProvenance(ctx, sourceIntegrity, source, helmClient, revision)
+	return s.verifyTraditionalHelmProvenance(ctx, sourceIntegrity, source, helmClient, revision, noCache)
 }
 
-func readHelmChartAndProvenance(ctx context.Context, helmClient helm.Client, chart, revision string) (chartTgz, provContent []byte, chartFilename string, err error) {
+func readHelmChartAndProvenance(ctx context.Context, helmClient helm.Client, chart, revision string, noCache bool) (chartTgz, provContent []byte, chartFilename string, err error) {
 	tgzPath, err := helmClient.GetChartTgzPath(chart, revision)
 	if err != nil {
 		return nil, nil, "", err
@@ -590,7 +591,7 @@ func readHelmChartAndProvenance(ctx context.Context, helmClient helm.Client, cha
 	if err != nil {
 		return nil, nil, "", err
 	}
-	provContent, chartFilename, err = helmClient.FetchProvenance(ctx, chart, revision)
+	provContent, chartFilename, err = helmClient.FetchProvenance(ctx, chart, noCache, revision)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -603,10 +604,18 @@ func (s *Service) verifyTraditionalHelmProvenance(
 	source *v1alpha1.ApplicationSource,
 	helmClient helm.Client,
 	revision string,
+	noCache bool,
 ) (*v1alpha1.SourceIntegrityCheckResult, error) {
-	chartTgz, provContent, chartFilename, err := readHelmChartAndProvenance(ctx, helmClient, source.Chart, revision)
+	chartTgz, provContent, chartFilename, err := readHelmChartAndProvenance(ctx, helmClient, source.Chart, revision, noCache)
 	if err != nil {
-		return sourceintegrity.HelmProvenanceFetchFailed(sourceIntegrity, source.RepoURL, err), nil
+		if errors.Is(err, helm.ErrProvenanceNotFound) {
+			// A 404 from every mirror is a definitive policy violation for this chart version, not a
+			// transient failure: record it as a failing check.
+			return sourceintegrity.HelmProvenanceFetchFailed(sourceIntegrity, source.RepoURL, err), nil
+		}
+		// Anything else (network error, 5xx) is transient: propagate it so the failure is cached as a
+		// failed generation with retry accounting instead of as a successful response.
+		return nil, fmt.Errorf("helm provenance verification: %w", err)
 	}
 	return sourceintegrity.VerifyHelm(ctx, sourceIntegrity, source.RepoURL, chartTgz, provContent, chartFilename)
 }

@@ -737,7 +737,7 @@ func TestGetChartTgzPath_OCIReturnsError(t *testing.T) {
 
 func TestFetchProvenance_OCIReturnsError(t *testing.T) {
 	client := NewClient("example.com", HelmCreds{}, true, "", "")
-	prov, name, err := client.FetchProvenance(context.Background(), "my-chart", "1.0.0")
+	prov, name, err := client.FetchProvenance(context.Background(), "my-chart", false, "1.0.0")
 	assert.Nil(t, prov)
 	assert.Empty(t, name)
 	assert.ErrorIs(t, err, ErrOCINotEnabled)
@@ -766,7 +766,7 @@ entries:
 	defer ts.Close()
 
 	client := NewClient(ts.URL, HelmCreds{}, false, "", "")
-	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", "1.0.0")
+	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", false, "1.0.0")
 	require.NoError(t, err)
 	assert.Equal(t, provContent, prov)
 	assert.Equal(t, "mychart-1.0.0.tgz", chartFilename)
@@ -781,8 +781,8 @@ entries:
   mychart:
   - version: "1.0.0"
     urls:
-    - "https://down1.example.com/chart.tgz"
-    - "https://down2.example.com/chart.tgz"
+    - "mychart-primary-1.0.0.tgz"
+    - "mychart-secondary-1.0.0.tgz"
 `))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -791,12 +791,41 @@ entries:
 	defer ts.Close()
 
 	client := NewClient(ts.URL, HelmCreds{}, false, "", "")
-	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", "1.0.0")
+	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", false, "1.0.0")
 	require.Error(t, err)
 	assert.Nil(t, prov)
 	assert.Empty(t, chartFilename)
+	assert.ErrorIs(t, err, ErrProvenanceNotFound)
 	assert.Contains(t, err.Error(), "failed to fetch provenance")
 	assert.Contains(t, err.Error(), "2 URL(s)")
+}
+
+func TestFetchProvenance_TransientError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.yaml":
+			_, _ = w.Write([]byte(`apiVersion: v1
+entries:
+  mychart:
+  - version: "1.0.0"
+    urls:
+    - "mychart-1.0.0.tgz"
+`))
+		case "/mychart-1.0.0.tgz.prov":
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, HelmCreds{}, false, "", "")
+	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", false, "1.0.0")
+	require.Error(t, err)
+	assert.Nil(t, prov)
+	assert.Empty(t, chartFilename)
+	assert.NotErrorIs(t, err, ErrProvenanceNotFound)
+	assert.Contains(t, err.Error(), "failed to fetch provenance")
 }
 
 func TestFetchProvenance_Success(t *testing.T) {
@@ -821,7 +850,7 @@ entries:
 	defer ts.Close()
 
 	client := NewClient(ts.URL, HelmCreds{}, false, "", "")
-	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", "1.0.0")
+	prov, chartFilename, err := client.FetchProvenance(context.Background(), "mychart", false, "1.0.0")
 	require.NoError(t, err)
 	assert.Equal(t, provContent, prov)
 	assert.Equal(t, "mychart-1.0.0.tgz", chartFilename)
